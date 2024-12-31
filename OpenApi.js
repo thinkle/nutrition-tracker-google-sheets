@@ -11,17 +11,17 @@ function getOpenApiSpec() {
   };
 
   const batchSchema = {
-  type: "object",
-  properties: {
-    items: {
-      type: "array",
-      items: { $ref: "#/components/schemas/LogItem" },
-      description: "An array of LogItem objects for batch operations."
-    }
-  },
-  required: ["items"],
-  description: "An object containing an array of LogItem objects for batch operations."
-};
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        items: { $ref: "#/components/schemas/LogItem" },
+        description: "An array of LogItem objects for batch operations."
+      }
+    },
+    required: ["items"],
+    description: "An object containing an array of LogItem objects for batch operations."
+  };
 
   // Reusable endpoint details
   const getLogsDocs = {
@@ -63,9 +63,9 @@ function getOpenApiSpec() {
 
   const postLogDocs = {
     post: {
-      operationId: "log",
-      summary: "Create a single log entry",
-      description: "Use POST to create a single log entry.",
+      operationId: "postLog",
+      summary: "Log a new entry",
+      description: "Log a new entry to the API.",
       requestBody: {
         required: true,
         content: {
@@ -76,18 +76,7 @@ function getOpenApiSpec() {
       },
       responses: {
         "201": {
-          description: "Log created successfully.",
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  status: { type: "string", enum: ["created"] },
-                  id: { type: "string" }
-                }
-              }
-            }
-          }
+          description: "Log entry created successfully."
         }
       }
     }
@@ -95,39 +84,20 @@ function getOpenApiSpec() {
 
   const postLogsDocs = {
     post: {
-      operationId: "logs",
-      summary: "Create multiple log entries",
-      description: "Use POST to create multiple log entries in a batch.",
+      operationId: "postLogs",
+      summary: "Log multiple entries",
+      description: "Log multiple entries to the API.",
       requestBody: {
         required: true,
         content: {
           "application/json": {
-            schema: batchSchema
+            schema: { $ref: "#/components/schemas/Batch" }
           }
         }
       },
       responses: {
         "201": {
-          description: "Logs created successfully.",
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  results: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        status: { type: "string", enum: ["created"] },
-                        id: { type: "string" }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
+          description: "Log entries created successfully."
         }
       }
     }
@@ -137,7 +107,7 @@ function getOpenApiSpec() {
     get: {
       operationId: "summaries",
       summary: "Fetch summaries",
-      description: "Retrieve summary data from the API.",
+      description: "Fetch summary data from the API.",
       responses: {
         "200": {
           description: "Successful response with summary data.",
@@ -145,16 +115,7 @@ function getOpenApiSpec() {
             "application/json": {
               schema: {
                 type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    date: { type: "string", format: "date" },
-                    totalCalories: { type: "number" },
-                    totalProtein: { type: "number" },
-                    totalFat: { type: "number" },
-                    totalCarbs: { type: "number" }
-                  }
-                }
+                items: { $ref: "#/components/schemas/SummaryItem" }
               }
             }
           }
@@ -163,23 +124,37 @@ function getOpenApiSpec() {
     }
   };
 
-  // Build the OpenAPI spec
   return {
-    openapi: "3.1.0",
+    openapi: "3.0.0",
     info: {
-      title: "Nutritional Tracking API",
-      version: "1.0.1",
-      description: "An API for tracking nutritional information, allowing CRUD operations on logs and summaries. Note: This API is designed to work with a Cloudflare Worker that rewrites URLs (e.g., `/logs` to `/?path=logs`)."
+      title: "Nutrition Tracker API",
+      version: "1.0.0",
+      description: "API for tracking nutritional data."
     },
     servers: [
       {
         url: baseUrl,
-        description: "Main API server"
+        description: "Deployed server"
       }
     ],
     components: {
       schemas: {
-        LogItem: logItemSchema
+        LogItem: logItemSchema,
+        Batch: batchSchema,
+        SummaryItem: {
+          type: "object",
+          properties: buildPropertiesSchema()
+        },
+        MetricsItem: {
+          type: "object",
+          properties: buildPropertiesSchemaForMetrics(),
+          description: "Represents a single metrics entry."
+        },
+        GoalsItem: {
+          type: "object",
+          properties: buildPropertiesSchemaForGoals(),
+          description: "Represents a single goals entry."
+        }
       }
     },
     paths: {
@@ -227,25 +202,143 @@ function getOpenApiSpec() {
       },
       "/summaries": {
         ...summariesDocs
+      },
+      "/metrics": {
+        get: {
+          operationId: "getMetrics",
+          summary: "Fetch metrics from the API",
+          description: "Retrieve metrics data. You can filter by `start_date` and `end_date` using query parameters.",
+          parameters: [
+            {
+              name: "start_date",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "date" },
+              description: "Filter metrics starting from this date in YYYY-MM-DD format."
+            },
+            {
+              name: "end_date",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "date" },
+              description: "Filter metrics up to this date in YYYY-MM-DD format."
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Successful response. Returns metrics data."
+            }
+          }
+        },
+        post: {
+          operationId: "postMetrics",
+          summary: "Log new metrics",
+          description: "Log new metrics data.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: buildPropertiesSchemaForMetrics()
+                }
+              }
+            }
+          },
+          responses: {
+            "201": {
+              description: "Metrics logged successfully."
+            }
+          }
+        }
+      },
+      "/goals": {
+        get: {
+          operationId: "getGoals",
+          summary: "Fetch current goals from the API",
+          description: "Retrieve the most recent goals for each category.",
+          responses: {
+            "200": {
+              description: "Successful response. Returns current goals data."
+            }
+          }
+        },
+        post: {
+          operationId: "postGoals",
+          summary: "Log new goals",
+          description: "Log new goals data.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: buildPropertiesSchemaForGoals()
+                }
+              }
+            }
+          },
+          responses: {
+            "201": {
+              description: "Goals logged successfully."
+            }
+          }
+        }
+      },
+      "/goals/history": {
+        get: {
+          operationId: "getGoalHistory",
+          summary: "Fetch goal history from the API",
+          description: "Retrieve the full history of goals.",
+          responses: {
+            "200": {
+              description: "Successful response. Returns goal history data."
+            }
+          }
+        }
       }
     }
   };
 }
-
-
 
 /**
  * Dynamically build the properties schema from FIXED_FIELDS_SPEC and NUTRIENTS_SPEC.
  */
 function buildPropertiesSchema() {
   const props = {};
-  FIXED_FIELDS_SPEC.forEach(field => {
-    props[field.name] = field.format ? 
-      { type: field.type, format: field.format } : 
-      { type: field.type };
+  FIXED_FIELDS_SPEC.concat(NUTRIENTS_SPEC).forEach(field => {
+    props[field.name] = { type: field.type };
+    if (field.format) {
+      props[field.name].format = field.format;
+    }
   });
-  NUTRIENTS_SPEC.forEach(nutrient => {
-    props[nutrient.name] = { type: nutrient.type };
+  return props;
+}
+
+/**
+ * Dynamically build the properties schema for METRICS_SPEC.
+ */
+function buildPropertiesSchemaForMetrics() {
+  const props = {};
+  METRICS_SPEC.forEach(field => {
+    props[field.name] = { type: field.type };
+    if (field.format) {
+      props[field.name].format = field.format;
+    }
+  });
+  return props;
+}
+
+/**
+ * Dynamically build the properties schema for GOALS_SPEC.
+ */
+function buildPropertiesSchemaForGoals() {
+  const props = {};
+  GOALS_SPEC.forEach(field => {
+    props[field.name] = { type: field.type };
+    if (field.format) {
+      props[field.name].format = field.format;
+    }
   });
   return props;
 }
