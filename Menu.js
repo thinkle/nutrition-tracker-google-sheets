@@ -1,4 +1,3 @@
-
 /*******************
  * LIFECYCLE
  *******************/
@@ -6,6 +5,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Nutrition Tools')
     .addItem('Setup Spreadsheet', 'setupSpreadsheet')
+    .addItem('Setup Metrics Sheet', 'setupMetricsSheet')
     .addItem('Get API Info', 'showApiInfo')
     .addToUi();
 }

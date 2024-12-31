@@ -50,3 +50,15 @@ function setupSpreadsheet() {
 
   SpreadsheetApp.getActive().toast('Setup complete!', 'Setup', 5);
 }
+
+function setupMetricsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let metricsSheet = ss.getSheetByName('Metrics');
+  if (!metricsSheet) {
+    metricsSheet = ss.insertSheet('Metrics');
+  }
+  metricsSheet.clear();
+  const headers = ['Date', 'Weight', 'Waist', 'OtherMeasurements', 'Notes'];
+  metricsSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+}
+
