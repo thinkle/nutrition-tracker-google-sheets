@@ -1,12 +1,10 @@
 function getOpenApiSpec() {
   const baseUrl = getDeployedWebAppUrl();
-
-  // Define reusable schema for LogItem
-  const logProperties = buildPropertiesSchema();
+  
 
   const logItemSchema = {
     type: "object",
-    properties: logProperties,
+    ...buildPropertiesSchemaForLog(),
     description: "Represents a single log entry for tracking nutritional data."
   };
 
@@ -125,10 +123,10 @@ function getOpenApiSpec() {
   };
 
   return {
-    openapi: "3.0.0",
+    openapi: "3.1.0",
     info: {
       title: "Nutrition Tracker API",
-      version: "1.0.0",
+      version: "1.1.0",
       description: "API for tracking nutritional data."
     },
     servers: [
@@ -143,16 +141,16 @@ function getOpenApiSpec() {
         Batch: batchSchema,
         SummaryItem: {
           type: "object",
-          properties: buildPropertiesSchema()
+          ...buildPropertiesSchemaForLog()
         },
         MetricsItem: {
           type: "object",
-          properties: buildPropertiesSchemaForMetrics(),
+          ...buildPropertiesSchemaForMetrics(),
           description: "Represents a single metrics entry."
         },
         GoalsItem: {
           type: "object",
-          properties: buildPropertiesSchemaForGoals(),
+          ...buildPropertiesSchemaForGoals(),
           description: "Represents a single goals entry."
         }
       }
@@ -240,7 +238,7 @@ function getOpenApiSpec() {
               "application/json": {
                 schema: {
                   type: "object",
-                  properties: buildPropertiesSchemaForMetrics()
+                  ...buildPropertiesSchemaForMetrics()
                 }
               }
             }
@@ -273,7 +271,7 @@ function getOpenApiSpec() {
               "application/json": {
                 schema: {
                   type: "object",
-                  properties: buildPropertiesSchemaForGoals()
+                  ...buildPropertiesSchemaForGoals()
                 }
               }
             }
@@ -302,43 +300,58 @@ function getOpenApiSpec() {
 }
 
 /**
- * Dynamically build the properties schema from FIXED_FIELDS_SPEC and NUTRIENTS_SPEC.
+ * Dynamically build the properties schema from a specification array.
  */
-function buildPropertiesSchema() {
+function buildPropertiesSchema(spec) {
   const props = {};
-  FIXED_FIELDS_SPEC.concat(NUTRIENTS_SPEC).forEach(field => {
+  spec.forEach(field => {
     props[field.name] = { type: field.type };
     if (field.format) {
       props[field.name].format = field.format;
     }
   });
   return props;
+}
+
+/**
+ * Get the required fields from a specification array.
+ */
+function getRequiredFields(spec) {
+  return spec.filter(field => field.required).map(field => field.name);
+}
+
+/**
+ * Dynamically build the properties schema for FIXED_FIELDS_SPEC and NUTRIENTS_SPEC.
+ */
+function buildPropertiesSchemaForLog() {
+  return {
+    type: "object",
+    properties: buildPropertiesSchema(FIXED_FIELDS_SPEC.concat(NUTRIENTS_SPEC)),
+    required: getRequiredFields(FIXED_FIELDS_SPEC.concat(NUTRIENTS_SPEC)),
+    description: "Represents a single log entry for tracking nutritional data."
+  };
 }
 
 /**
  * Dynamically build the properties schema for METRICS_SPEC.
  */
 function buildPropertiesSchemaForMetrics() {
-  const props = {};
-  METRICS_SPEC.forEach(field => {
-    props[field.name] = { type: field.type };
-    if (field.format) {
-      props[field.name].format = field.format;
-    }
-  });
-  return props;
+  return {
+    type: "object",
+    properties: buildPropertiesSchema(METRICS_SPEC),
+    required: getRequiredFields(METRICS_SPEC),
+    description: "Represents a single metrics entry."
+  };
 }
 
 /**
  * Dynamically build the properties schema for GOALS_SPEC.
  */
 function buildPropertiesSchemaForGoals() {
-  const props = {};
-  GOALS_SPEC.forEach(field => {
-    props[field.name] = { type: field.type };
-    if (field.format) {
-      props[field.name].format = field.format;
-    }
-  });
-  return props;
+  return {
+    type: "object",
+    properties: buildPropertiesSchema(GOALS_SPEC),
+    required: getRequiredFields(GOALS_SPEC),
+    description: "Represents a single goals entry."
+  };
 }

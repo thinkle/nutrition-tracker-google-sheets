@@ -3,9 +3,9 @@
  *******************/
 const FIXED_FIELDS_SPEC = [
   { name: 'ID', type: 'string' },
-  { name: 'Date', type: 'string', format: 'date' },
+  { name: 'Date', type: 'string', format: 'date', required : true },
   { name: 'Meal', type: 'string' },
-  { name: 'Food', type: 'string' },
+  { name: 'Food', type: 'string', required: true },
   { name: 'Description', type: 'string' }
 ];
 
@@ -20,7 +20,7 @@ const NUTRIENTS_SPEC = [
 ];
 
 const METRICS_SPEC = [
-  { name: 'Date', type: 'string', format: 'date' },
+  { name: 'Date', type: 'string', format: 'date', required: true },
   { name: 'Weight', type: 'number' },
   { name: 'Waist', type: 'number' },
   { name: 'OtherMeasurements', type: 'string' },
@@ -28,7 +28,7 @@ const METRICS_SPEC = [
 ];
 
 const GOALS_SPEC = [
-  { name: 'Date', type: 'string', format: 'date' },
+  { name: 'Date', type: 'string', format: 'date', required: true },
   { name: 'WeightGoal', type: 'string' },
   { name: 'NutritionGoal', type: 'string' },
   { name: 'OtherGoal', type: 'string' },
