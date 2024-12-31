@@ -6,6 +6,7 @@ function onOpen() {
     .createMenu('Nutrition Tools')
     .addItem('Setup Spreadsheet', 'setupSpreadsheet')
     .addItem('Setup Metrics Sheet', 'setupMetricsSheet')
+    .addItem('Setup Goals Sheet', 'setupGoalsSheet')
     .addItem('Get API Info', 'showApiInfo')
     .addToUi();
 }

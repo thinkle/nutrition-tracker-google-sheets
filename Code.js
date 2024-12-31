@@ -19,9 +19,28 @@ const NUTRIENTS_SPEC = [
   { name: 'alcohol', type: 'number' }
 ];
 
+const METRICS_SPEC = [
+  { name: 'Date', type: 'string', format: 'date' },
+  { name: 'Weight', type: 'number' },
+  { name: 'Waist', type: 'number' },
+  { name: 'OtherMeasurements', type: 'string' },
+  { name: 'Notes', type: 'string' }
+];
+
+const GOALS_SPEC = [
+  { name: 'Date', type: 'string', format: 'date' },
+  { name: 'WeightGoal', type: 'string' },
+  { name: 'NutritionGoal', type: 'string' },
+  { name: 'OtherGoal', type: 'string' },
+  { name: 'Notes', type: 'string' },
+  ...NUTRIENTS_SPEC
+];
+
 // Derived arrays of names for setup and data ops:
 const FIXED_FIELDS = FIXED_FIELDS_SPEC.map(f => f.name);
 const NUTRIENTS = NUTRIENTS_SPEC.map(n => n.name);
+const METRICS = METRICS_SPEC.map(m => m.name);
+const GOALS = GOALS_SPEC.map(g => g.name);
 
 function getDeployedWebAppUrl () {
   //ScriptApp.getService().getUrl();

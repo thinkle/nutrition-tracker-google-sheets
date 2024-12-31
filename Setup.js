@@ -60,7 +60,16 @@ function setupMetricsSheet() {
     metricsSheet = ss.insertSheet('Metrics');
   }
   metricsSheet.clear();
-  const headers = ['Date', 'Weight', 'Waist', 'OtherMeasurements', 'Notes'];
-  metricsSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  metricsSheet.getRange(1, 1, 1, METRICS.length).setValues([METRICS]);
+}
+
+function setupGoalsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let goalsSheet = ss.getSheetByName('Goals');
+  if (!goalsSheet) {
+    goalsSheet = ss.insertSheet('Goals');
+  }
+  goalsSheet.clear();
+  goalsSheet.getRange(1, 1, 1, GOALS.length).setValues([GOALS]);
 }
 
