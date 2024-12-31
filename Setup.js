@@ -33,7 +33,9 @@ function setupSpreadsheet() {
 
   // Put a UNIQUE function in the Summary sheet to list out the dates
   // We'll put it starting at A2
-  summarySheet.getRange('A2').setFormula(`=UNIQUE(FILTER(Log!${dateColLetter}2:${dateColLetter}, LEN(Log!${dateColLetter}2:${dateColLetter})))`);
+  summarySheet.getRange('A2').setFormula(
+    `=ARRAYFORMULA(IF(A2:A<>"",SUMIF(Log!$${dateColLetter}:$${dateColLetter},A2:A,Log!$${nutrientColLetter}:$${nutrientColLetter}),""))`
+  );
 
   // For each nutrient, create a SUMIF formula based on the date
   // Nutrient columns start after FIXED_FIELDS in the Log sheet.
