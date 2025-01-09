@@ -14,18 +14,61 @@ function sendJsonResponse(obj, status = 200) {
   }
   return ContentService
     .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
+    .setMimeType(ContentService.MimeType.JSON);    
+}
+
+/************************************************
+ * Helper function to log requests to a "Requests" sheet
+ ************************************************/
+function logRequestSheet(e, method, status, errMessage) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let requestSheet = ss.getSheetByName('Requests');
+  if (!requestSheet) {
+    requestSheet = ss.insertSheet('Requests');
+    requestSheet.appendRow(['Timestamp', 'Method', 'Path', 'Parameters', 'ErrorMessage', 'Status']);
   }
 
-/*******************
- * WEB ENDPOINTS
- *******************/
-function doGet(e) {
-  console.log('doGet called with: ' + JSON.stringify(e.parameter));
+  requestSheet.appendRow([
+    new Date().toISOString(),
+    method,
+    e.parameter.path || '(no path)',
+    JSON.stringify(e.parameter),
+    errMessage || '',
+    status
+  ]);
+}
+
+/************************************************
+ * Wrapper function that logs requests before/after
+ ************************************************/
+function withRequestLogging(e, method, internalFn) {
+  try {
+    const response = internalFn(e);
+    // If the response includes an error, mark status accordingly
+    if (response && response.getContent()) {
+      const body = JSON.parse(response.getContent());
+      if (body.error) {
+        logRequestSheet(e, method, 'Failed', body.error);
+      } else {
+        logRequestSheet(e, method, 'Success');
+      }
+    } else {
+      logRequestSheet(e, method, 'Success');
+    }
+    return response;
+  } catch (err) {
+    logRequestSheet(e, method, 'Exception', err.message);
+    throw err; // re-throw to preserve existing error handling
+  }
+}
+
+/************************************************
+ * Original doGet/doPost renamed to internal 
+ ************************************************/
+function internalDoGet(e) {
+  console.log('internalDoGet called with: ' + JSON.stringify(e.parameter));
 
   let path = e.parameter.path || '';
-
-  // If no path, return the OpenAPI spec (no token required)
   if (!path) {
     return sendJsonResponse(getOpenApiSpec());
   }
@@ -33,27 +76,52 @@ function doGet(e) {
     path = path.substr(1);
   }
 
-  // Check token for protected endpoints
-  //if (!checkToken(e)) return sendJsonResponse({error: 'Invalid token'}, 403);
-
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   try {
     if (path === 'summaries') {
-      // GET summaries
       return handleGetSummaries(ss);
     } else if (path === 'logs' || path === 'log') {
-      // GET logs (optionally filter by id or date)
       return handleGetLogs(e, ss);
     } else if (path === 'metrics') {
-      // GET metrics
       return handleGetMetrics(e, ss);
     } else if (path === 'goals') {
-      // GET current goals
       return handleGetGoals(ss);
     } else if (path === 'goals/history') {
-      // GET goal history
       return handleGetGoalHistory(ss);
+    } 
+  } catch (error) {
+    const errorDetails = {
+      parameters: e.parameter,
+      error: error.message,
+      stack: error.stack
+    };
+    logError('Error in internalDoGet', errorDetails);
+    return sendJsonResponse({ error: 'Internal server error', details: errorDetails }, 500);
+  }
+
+  logError('Error in internalDoGet', { parameters: e.parameter, error: 'Unknown endpoint' });
+  return sendJsonResponse({ error: 'Unknown endpoint', parameter: e.parameter, path }, 404);
+}
+
+function internalDoPost(e) {
+  console.log('internalDoPost called with: ' + JSON.stringify(e.parameter));
+
+  let path = e.parameter.path || '';
+  if (path[0] === '/') {
+    path = path.substr(1);
+  }
+  const method = e.parameter.method || 'POST';
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  try {
+    if (path === 'log' || path === 'logs') {
+      return handleLogRequest(e, ss, method);
+    } else if (path === 'metrics') {
+      return handlePostMetrics(e, ss);
+    } else if (path === 'goals') {
+      return handlePostGoals(e, ss);
     }
   } catch (error) {
     const errorDetails = {
@@ -61,62 +129,59 @@ function doGet(e) {
       error: error.message,
       stack: error.stack
     };
-    logError('Error in doGet', { parameters: e.parameter, error: error.message });
-    return sendJsonResponse({ error: 'Internal server error',details:errorDetails }, 500);
+    logError('Error in internalDoPost', errorDetails);
+    return sendJsonResponse({ error: 'Internal server error', details: errorDetails }, 500);
   }
 
-  logError('Error in doGet', { parameters: e.parameter, error: 'Unknown endpoint' });
+  logError('Error in internalDoPost', { parameters: e.parameter, error: 'Unknown endpoint' });
   return sendJsonResponse({ error: 'Unknown endpoint', parameter: e.parameter, path }, 404);
+}
+
+/************************************************
+ * Public doGet/doPost calls the wrapper
+ ************************************************/
+function doGet(e) {
+  return withRequestLogging(e, 'GET', internalDoGet);
 }
 
 function doPost(e) {
-  console.log('doPost called with: ' + JSON.stringify(e.parameter));
-
-  let path = e.parameter.path || '';
-  if (path[0] === '/') {
-    path = path.substr(1);
-  }
-
-  // Check token for protected endpoints
-  //if (!checkToken(e)) return sendJsonResponse({error: 'Invalid token'}, 403);
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  try {
-    if (path === 'log') {
-      // POST log
-      return handlePostLog(e, ss);
-    } else if (path === 'logs') {
-      // POST logs
-      return handlePostLogs(e, ss);
-    } else if (path === 'metrics') {
-      // POST metrics
-      return handlePostMetrics(e, ss);
-    } else if (path === 'goals') {
-      // POST goals
-      return handlePostGoals(e, ss);
-    }
-  } catch (error) {
-    logError('Error in doPost', { parameters: e.parameter, error: error.message });
-    return sendJsonResponse({ error: 'Internal server error' }, 500);
-  }
-
-  logError('Error in doPost', { parameters: e.parameter, error: 'Unknown endpoint' });
-  return sendJsonResponse({ error: 'Unknown endpoint', parameter: e.parameter, path }, 404);
+  // If method is PUT/DELETE, we’re still receiving it as a POST from Cloudflare
+  const method = e.parameter.method || 'POST';
+  return withRequestLogging(e, method, internalDoPost);
 }
 
-function handlePostLog(e, ss) {
+function handleLogRequest(e, ss, method) {
   const logSheet = ss.getSheetByName('Log');
   const data = e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
-  const newId = createLog(logSheet, data);
-  return sendJsonResponse({ status: 'created', id: newId }, 201);
+
+  // Check if `data` is an array
+  if (data.items && Array.isArray(data.items)) {
+    console.log('Processing batch data');
+    const items = data.items;
+    const results = items.map(entry => {
+      return processLogEntry(logSheet, entry, method);
+    });
+    return sendJsonResponse({ results: results });
+  }
+
+  // Single entry handling (default behavior)
+  return sendJsonResponse(processLogEntry(logSheet, data, method));
 }
 
-function handlePostLogs(e, ss) {
-  const logSheet = ss.getSheetByName('Log');
-  const data = e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
-  const ids = data.items.map(item => createLog(logSheet, item));
-  return sendJsonResponse({ status: 'created', ids }, 201);
+function processLogEntry(logSheet, entry, method) {
+  if (method === 'POST') {
+    const id = createLog(logSheet, entry);
+    return { status: 'created', id: id };
+  } else if (method === 'PUT') {
+    if (!entry.ID) return { status: 'error', message: 'ID required for update' };
+    const success = updateLog(logSheet, entry.ID, entry);
+    return success ? { status: 'updated', id: entry.ID } : { status: 'error', message: 'Not found' };
+  } else if (method === 'DELETE') {
+    if (!entry.ID) return { status: 'error', message: 'ID required for delete' };
+    const success = deleteLog(logSheet, entry.ID);
+    return success ? { status: 'deleted', id: entry.ID } : { status: 'error', message: 'Not found' };
+  }
+  return { status: 'error', message: 'Unknown method' };
 }
 
 function handleGetLogs(e, ss) {

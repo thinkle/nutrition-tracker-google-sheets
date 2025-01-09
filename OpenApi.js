@@ -77,6 +77,57 @@ function getOpenApiSpec() {
           description: "Log entry created successfully."
         }
       }
+    },
+    put: {
+      operationId: "putLog",
+      summary: "Update an existing log entry",
+      description: "Update an existing entry in the API.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/LogItem" }
+          }
+        }
+      },
+      responses: {
+        "200": {
+          description: "Log entry updated successfully."
+        },
+        "404": { 
+          description: "Log entry not found."
+        }        
+      }
+    },
+    delete : {
+      operationId: "deleteLog",
+      summary: "Delete an existing log entry",
+      description: "Delete an existing entry in the API.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {
+                ID: {
+                  type: "string",
+                  description: "The ID of the log entry to delete."
+                }
+              },
+              required: ["ID"]
+            }
+          }
+        }
+      },
+      responses: {
+        "200": {
+          description: "Log entry deleted successfully."
+        },
+        "404": { 
+          description: "Log entry not found."
+        }        
+      }
     }
   };
 
