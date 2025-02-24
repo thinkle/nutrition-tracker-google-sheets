@@ -1,0 +1,249 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Xert Cloudflare Proxy API",
+    "description": "A Cloudflare Worker that securely proxies Xert API requests.",
+    "version": "1.2"
+  },
+  "servers": [
+    {
+      "url": "https://xert.tmhinkle.workers.dev",
+      "description": "Cloudflare Worker API proxying Xert"
+    }
+  ],
+  "paths": {
+    "/user": {
+      "get": {
+        "summary": "Get User Training & Fitness Info",
+        "description": "Retrieves the user's fitness signature, training load, workout-of-the-day, and XSS training targets.",
+        "operationId": "getUserTrainingInfo",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Format of the workout file (optional). Can be 'erg' or 'zwo'.",
+            "required": false,
+            "schema": { "type": "string", "enum": ["erg", "zwo"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User fitness and training info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "weight": {
+                      "type": "number",
+                      "description": "User's weight in kg"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "Current training status (Fresh, Tired, etc.)"
+                    },
+                    "signature": {
+                      "type": "object",
+                      "properties": {
+                        "ftp": {
+                          "type": "number",
+                          "description": "Functional Threshold Power"
+                        },
+                        "ltp": {
+                          "type": "number",
+                          "description": "Lower Threshold Power"
+                        },
+                        "hie": {
+                          "type": "number",
+                          "description": "High-Intensity Energy"
+                        },
+                        "pp": { "type": "number", "description": "Peak Power" }
+                      }
+                    },
+                    "tl": {
+                      "type": "object",
+                      "properties": {
+                        "low": { "type": "number" },
+                        "high": { "type": "number" },
+                        "peak": { "type": "number" },
+                        "total": { "type": "number" }
+                      }
+                    },
+                    "targetXSS": {
+                      "type": "object",
+                      "properties": {
+                        "low": {
+                          "type": "number",
+                          "description": "Low-intensity training target"
+                        },
+                        "high": {
+                          "type": "number",
+                          "description": "High-intensity training target"
+                        },
+                        "peak": {
+                          "type": "number",
+                          "description": "Peak training target"
+                        },
+                        "total": {
+                          "type": "number",
+                          "description": "Total training target"
+                        }
+                      }
+                    },
+                    "wotd": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "description": "Name of the recommended workout"
+                        },
+                        "workoutId": {
+                          "type": "string",
+                          "description": "Workout ID (needed for retrieval)"
+                        },
+                        "description": {
+                          "type": "string",
+                          "description": "Workout description"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": ["None", "Forecast", "Scheduled"],
+                          "description": "Type of workout-of-the-day"
+                        },
+                        "difficulty": {
+                          "type": "number",
+                          "description": "Workout difficulty score"
+                        },
+                        "url": {
+                          "type": "string",
+                          "description": "URL to download the workout file"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    },
+    "/activity": {
+      "get": {
+        "summary": "Get User Activity List",
+        "description": "Retrieve a list of completed workouts within a given date range.",
+        "operationId": "getActivityList",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Start timestamp (Unix seconds). Retrieves activities after this time.",
+            "required": true,
+            "schema": { "type": "integer", "format": "int64" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "End timestamp (Unix seconds). Retrieves activities before this time.",
+            "required": true,
+            "schema": { "type": "integer", "format": "int64" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of activities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "activities": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "start_date": {
+                            "type": "object",
+                            "properties": {
+                              "date": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "timezone": { "type": "string" }
+                            }
+                          },
+                          "description": { "type": "string", "nullable": true },
+                          "path": {
+                            "type": "string",
+                            "description": "The activity ID to use for detailed data"
+                          },
+                          "activity_type": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    },
+    "/workouts": {
+      "get": {
+        "summary": "List User's Workouts",
+        "description": "Retrieve all workouts available to the authenticated user.",
+        "operationId": "getWorkouts",
+        "responses": {
+          "200": {
+            "description": "List of workouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "workouts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "description": "Workout ID"
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Workout name"
+                          },
+                          "description": { "type": "string", "nullable": true }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    }
+  },
+  "components": {
+    "schemas": {},
+    "securitySchemes": {
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-KEY",
+        "description": "Your secret API key for authentication."
+      }
+    }
+  }
+}
