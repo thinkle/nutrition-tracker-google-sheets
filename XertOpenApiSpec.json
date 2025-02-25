@@ -1,59 +1,268 @@
-
-
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    // 🔐 Require API Key (Set in GPT and Cloudflare)
-    const API_KEY = env.API_KEY
-    const SECRET_STORE = env.SECRET_STORE
-    const requestApiKey = request.headers.get("X-API-KEY");
-    if (requestApiKey !== API_KEY) {
-      return new Response("Unauthorized", { status: 403 });
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Xert Cloudflare Proxy API",
+    "description": "A Cloudflare Worker that securely proxies Xert API requests.",
+    "version": "1.4"
+  },
+  "servers": [
+    {
+      "url": "https://xert.tmhinkle.workers.dev",
+      "description": "Cloudflare Worker API proxying Xert"
     }
-
-    // 🔐 Load credentials from Cloudflare KV
-    const XERT_USERNAME = await SECRET_STORE.get("XERT_USERNAME");
-    const XERT_PASSWORD = await SECRET_STORE.get("XERT_PASSWORD");
-
-    // Load cached access token (if available)
-    let accessToken = await SECRET_STORE.get("xert_access_token");
-
-    // If there's no token, or it’s expired, get a new one
-    if (!accessToken) {
-      const tokenResponse = await fetch("https://www.xertonline.com/oauth/token", {
-        method: "POST",
-        headers: {
-          "Authorization": "Basic " + btoa("xert_public:xert_public"),
-          "Content-Type": "application/x-www-form-urlencoded"
+  ],
+  "paths": {
+    "/training_info": {
+      "get": {
+        "summary": "Get User Training & Fitness Info",
+        "description": "Retrieves the user's fitness signature, training load, Workout-of-the-Day, and XSS training targets.",
+        "operationId": "getUserTrainingInfo",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Format of the workout file (optional). Can be 'erg' or 'zwo'.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["erg", "zwo"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User fitness and training info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserTrainingInfo"
+                }
+              }
+            }
+          }
         },
-        body: `grant_type=password&username=${encodeURIComponent(XERT_USERNAME)}&password=${encodeURIComponent(XERT_PASSWORD)}`
-      });
-
-      const tokenData = await tokenResponse.json();
-      if (!tokenData.access_token) {
-        return new Response("Failed to obtain token", { status: 401 });
+        "security": [{ "apiKeyAuth": [] }]
       }
-
-      accessToken = tokenData.access_token;
-
-      // Store the token temporarily in KV storage
-      await SECRET_STORE.put("xert_access_token", accessToken, { expirationTtl: 600 }); // Store for 10 min
+    },
+    "/user": {
+      "get": {
+        "summary": "Get User Info",
+        "description": "Retrieves the user's fitness signature, training load, Workout-of-the-Day, Weight, and metrics, and XSS training targets.",
+        "operationId": "getUserTrainingInfo",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Format of the workout file (optional). Can be 'erg' or 'zwo'.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["erg", "zwo"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User fitness and training info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserTrainingInfo"
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    },
+    "/activity": {
+      "get": {
+        "summary": "Get User Activity List",
+        "description": "Retrieve a list of completed workouts within a given date range.",
+        "operationId": "getActivityList",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Start timestamp (Unix seconds). Retrieves activities after this time.",
+            "required": true,
+            "schema": { "type": "integer", "format": "int64" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "End timestamp (Unix seconds). Retrieves activities before this time.",
+            "required": true,
+            "schema": { "type": "integer", "format": "int64" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of activities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityList"
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    },
+    "/activity/{activity_id}": {
+      "get": {
+        "summary": "Get Detailed Activity Data",
+        "description": "Retrieve detailed data for a specific workout, including calories, fat, carbs burned, power data, and difficulty.",
+        "operationId": "getActivityDetails",
+        "parameters": [
+          {
+            "name": "activity_id",
+            "in": "path",
+            "description": "The unique ID of the workout (retrieved from /activity).",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "include_session_data",
+            "in": "query",
+            "description": "Set to 1 to include per-second session data. **Avoid this to prevent overly large responses.**",
+            "required": false,
+            "schema": { "type": "integer", "enum": [0, 1] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Detailed activity data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    },
+    "/workouts": {
+      "get": {
+        "summary": "List User's Workouts",
+        "description": "Retrieve all workouts available to the authenticated user.",
+        "operationId": "getWorkouts",
+        "responses": {
+          "200": {
+            "description": "List of workouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "workouts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "description": "Workout ID"
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Workout name"
+                          },
+                          "description": { "type": "string", "nullable": true }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
     }
-
-    // Forward request to Xert API
-    let xertApiUrl = "https://www.xertonline.com/oauth" + url.pathname;
-    if (url.search) xertApiUrl += url.search;
-
-    const xertResponse = await fetch(xertApiUrl, {
-      method: request.method,
-      headers: {
-        "Authorization": `Bearer ${accessToken}`
+  },
+  "components": {
+    "schemas": {
+      "UserTrainingInfo": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "weight": { "type": "number" },
+          "status": { "type": "string" },
+          "signature": {
+            "type": "object",
+            "properties": {
+              "ftp": { "type": "number" },
+              "ltp": { "type": "number" },
+              "hie": { "type": "number" },
+              "pp": { "type": "number" }
+            }
+          },
+          "wotd": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "workoutId": { "type": "string" },
+              "description": { "type": "string" },
+              "difficulty": { "type": "number" },
+              "url": { "type": "string" }
+            }
+          }
+        }
+      },
+      "ActivityList": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "activities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "start_date": { "type": "string", "format": "date-time" },
+                "path": { "type": "string" },
+                "activity_type": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "ActivityDetails": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "total_grams_carbs": { "type": "number" },
+              "total_grams_fat": { "type": "number" },
+              "total_calories": { "type": "number" },
+              "distance": { "type": "number" },
+              "duration": { "type": "integer" },
+              "focus": { "type": "string" },
+              "difficulty": { "type": "number" }
+            }
+          }
+        }
       }
-    });
-
-    return new Response(await xertResponse.text(), {
-      status: xertResponse.status,
-      headers: { "Content-Type": "application/json" }
-    });
+    },
+    "securitySchemes": {
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-KEY"
+      }
+    }
   }
-};
+}
