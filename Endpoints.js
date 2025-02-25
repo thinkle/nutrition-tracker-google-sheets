@@ -89,7 +89,16 @@ function internalDoGet(e) {
       return handleGetGoals(ss);
     } else if (path === 'goals/history') {
       return handleGetGoalHistory(ss);
-    } 
+    } else if (path=='favicon.ico') {
+      return HtmlService.createHtmlOutput(`
+        <html>
+          <head>
+            <link rel="icon" href="https://ssl.gstatic.com/docs/spreadsheets/favicon3.ico" />
+          </head>
+          <body></body>
+        </html>
+      `);
+    }
   } catch (error) {
     const errorDetails = {
       parameters: e.parameter,
