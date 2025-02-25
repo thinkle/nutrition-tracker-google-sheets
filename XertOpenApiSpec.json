@@ -1,249 +1,59 @@
-{
-  "openapi": "3.1.0",
-  "info": {
-    "title": "Xert Cloudflare Proxy API",
-    "description": "A Cloudflare Worker that securely proxies Xert API requests.",
-    "version": "1.2"
-  },
-  "servers": [
-    {
-      "url": "https://xert.tmhinkle.workers.dev",
-      "description": "Cloudflare Worker API proxying Xert"
+
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    // 🔐 Require API Key (Set in GPT and Cloudflare)
+    const API_KEY = env.API_KEY
+    const SECRET_STORE = env.SECRET_STORE
+    const requestApiKey = request.headers.get("X-API-KEY");
+    if (requestApiKey !== API_KEY) {
+      return new Response("Unauthorized", { status: 403 });
     }
-  ],
-  "paths": {
-    "/user": {
-      "get": {
-        "summary": "Get User Training & Fitness Info",
-        "description": "Retrieves the user's fitness signature, training load, workout-of-the-day, and XSS training targets.",
-        "operationId": "getUserTrainingInfo",
-        "parameters": [
-          {
-            "name": "format",
-            "in": "query",
-            "description": "Format of the workout file (optional). Can be 'erg' or 'zwo'.",
-            "required": false,
-            "schema": { "type": "string", "enum": ["erg", "zwo"] }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "User fitness and training info",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": { "type": "boolean" },
-                    "weight": {
-                      "type": "number",
-                      "description": "User's weight in kg"
-                    },
-                    "status": {
-                      "type": "string",
-                      "description": "Current training status (Fresh, Tired, etc.)"
-                    },
-                    "signature": {
-                      "type": "object",
-                      "properties": {
-                        "ftp": {
-                          "type": "number",
-                          "description": "Functional Threshold Power"
-                        },
-                        "ltp": {
-                          "type": "number",
-                          "description": "Lower Threshold Power"
-                        },
-                        "hie": {
-                          "type": "number",
-                          "description": "High-Intensity Energy"
-                        },
-                        "pp": { "type": "number", "description": "Peak Power" }
-                      }
-                    },
-                    "tl": {
-                      "type": "object",
-                      "properties": {
-                        "low": { "type": "number" },
-                        "high": { "type": "number" },
-                        "peak": { "type": "number" },
-                        "total": { "type": "number" }
-                      }
-                    },
-                    "targetXSS": {
-                      "type": "object",
-                      "properties": {
-                        "low": {
-                          "type": "number",
-                          "description": "Low-intensity training target"
-                        },
-                        "high": {
-                          "type": "number",
-                          "description": "High-intensity training target"
-                        },
-                        "peak": {
-                          "type": "number",
-                          "description": "Peak training target"
-                        },
-                        "total": {
-                          "type": "number",
-                          "description": "Total training target"
-                        }
-                      }
-                    },
-                    "wotd": {
-                      "type": "object",
-                      "properties": {
-                        "name": {
-                          "type": "string",
-                          "description": "Name of the recommended workout"
-                        },
-                        "workoutId": {
-                          "type": "string",
-                          "description": "Workout ID (needed for retrieval)"
-                        },
-                        "description": {
-                          "type": "string",
-                          "description": "Workout description"
-                        },
-                        "type": {
-                          "type": "string",
-                          "enum": ["None", "Forecast", "Scheduled"],
-                          "description": "Type of workout-of-the-day"
-                        },
-                        "difficulty": {
-                          "type": "number",
-                          "description": "Workout difficulty score"
-                        },
-                        "url": {
-                          "type": "string",
-                          "description": "URL to download the workout file"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
+
+    // 🔐 Load credentials from Cloudflare KV
+    const XERT_USERNAME = await SECRET_STORE.get("XERT_USERNAME");
+    const XERT_PASSWORD = await SECRET_STORE.get("XERT_PASSWORD");
+
+    // Load cached access token (if available)
+    let accessToken = await SECRET_STORE.get("xert_access_token");
+
+    // If there's no token, or it’s expired, get a new one
+    if (!accessToken) {
+      const tokenResponse = await fetch("https://www.xertonline.com/oauth/token", {
+        method: "POST",
+        headers: {
+          "Authorization": "Basic " + btoa("xert_public:xert_public"),
+          "Content-Type": "application/x-www-form-urlencoded"
         },
-        "security": [{ "apiKeyAuth": [] }]
+        body: `grant_type=password&username=${encodeURIComponent(XERT_USERNAME)}&password=${encodeURIComponent(XERT_PASSWORD)}`
+      });
+
+      const tokenData = await tokenResponse.json();
+      if (!tokenData.access_token) {
+        return new Response("Failed to obtain token", { status: 401 });
       }
-    },
-    "/activity": {
-      "get": {
-        "summary": "Get User Activity List",
-        "description": "Retrieve a list of completed workouts within a given date range.",
-        "operationId": "getActivityList",
-        "parameters": [
-          {
-            "name": "from",
-            "in": "query",
-            "description": "Start timestamp (Unix seconds). Retrieves activities after this time.",
-            "required": true,
-            "schema": { "type": "integer", "format": "int64" }
-          },
-          {
-            "name": "to",
-            "in": "query",
-            "description": "End timestamp (Unix seconds). Retrieves activities before this time.",
-            "required": true,
-            "schema": { "type": "integer", "format": "int64" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of activities",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": { "type": "boolean" },
-                    "activities": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "name": { "type": "string" },
-                          "start_date": {
-                            "type": "object",
-                            "properties": {
-                              "date": {
-                                "type": "string",
-                                "format": "date-time"
-                              },
-                              "timezone": { "type": "string" }
-                            }
-                          },
-                          "description": { "type": "string", "nullable": true },
-                          "path": {
-                            "type": "string",
-                            "description": "The activity ID to use for detailed data"
-                          },
-                          "activity_type": { "type": "string" }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [{ "apiKeyAuth": [] }]
-      }
-    },
-    "/workouts": {
-      "get": {
-        "summary": "List User's Workouts",
-        "description": "Retrieve all workouts available to the authenticated user.",
-        "operationId": "getWorkouts",
-        "responses": {
-          "200": {
-            "description": "List of workouts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": { "type": "boolean" },
-                    "workouts": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "Workout ID"
-                          },
-                          "name": {
-                            "type": "string",
-                            "description": "Workout name"
-                          },
-                          "description": { "type": "string", "nullable": true }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [{ "apiKeyAuth": [] }]
-      }
+
+      accessToken = tokenData.access_token;
+
+      // Store the token temporarily in KV storage
+      await SECRET_STORE.put("xert_access_token", accessToken, { expirationTtl: 600 }); // Store for 10 min
     }
-  },
-  "components": {
-    "schemas": {},
-    "securitySchemes": {
-      "apiKeyAuth": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-API-KEY",
-        "description": "Your secret API key for authentication."
+
+    // Forward request to Xert API
+    let xertApiUrl = "https://www.xertonline.com/oauth" + url.pathname;
+    if (url.search) xertApiUrl += url.search;
+
+    const xertResponse = await fetch(xertApiUrl, {
+      method: request.method,
+      headers: {
+        "Authorization": `Bearer ${accessToken}`
       }
-    }
+    });
+
+    return new Response(await xertResponse.text(), {
+      status: xertResponse.status,
+      headers: { "Content-Type": "application/json" }
+    });
   }
-}
+};
