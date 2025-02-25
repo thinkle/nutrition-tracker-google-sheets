@@ -1,4 +1,4 @@
-# Nutrition Tracker Shim for Working w/ AI 
+# Nutrition Tracker Shim for Working w/ AI
 
 If you have the paid ChatGPT you can make a custom GPT which you give access to an API. This project leverages that capability to let you track nutritional data in a google sheet. It turns GPT into a running nutritionist and health advisor, which is pretty awesome.
 

@@ -3,7 +3,7 @@
  *****************************/
 
 /**
- * 1. /metrics/ Endpoint
+ * 1. /metrics/ Endpoint [DONE]
  *    - Purpose: Track physical metrics like weight, waist, and other measurements over time.
  *    - Features:
  *      - Logs individual metrics (POST).
@@ -22,7 +22,7 @@
  */
 
 /**
- * 2. /goals/ Endpoint
+ * 2. /goals/ Endpoint [DONE]
  *    - Purpose: Manage numeric and open-ended goals, aligned with the Logs tab structure.
  *    - Features:
  *      - Logs new goals or updates existing ones (POST).
