@@ -3,6 +3,7 @@
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const path = url.pathname;
     // 🔐 Require API Key (Set in GPT and Cloudflare)
     const API_KEY = env.API_KEY
     const SECRET_STORE = env.SECRET_STORE
@@ -40,7 +41,27 @@ export default {
       await SECRET_STORE.put("xert_access_token", accessToken, { expirationTtl: 600 }); // Store for 10 min
     }
 
-    // Forward request to Xert API
+    // ✅ NEW: Handle `/recentRides?days=n`
+    if (path === "/recentRides") {
+      const days = parseInt(url.searchParams.get("days") || "1", 10);
+      const now = Math.floor(Date.now() / 1000); // Current time in Unix timestamp
+      const fromTimestamp = now - (days * 86400); // `days` days ago
+
+      // Build the Xert API URL
+      let xertApiUrl = `https://www.xertonline.com/oauth/activity?from=${fromTimestamp}&to=${now}`;
+
+      const xertResponse = await fetch(xertApiUrl, {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+
+      return new Response(await xertResponse.text(), {
+        status: xertResponse.status,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // Otherwise, just forward the request to Xert API
     let xertApiUrl = "https://www.xertonline.com/oauth" + url.pathname;
     if (url.search) xertApiUrl += url.search;
 

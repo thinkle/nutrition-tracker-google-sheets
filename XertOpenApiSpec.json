@@ -76,6 +76,35 @@
         "security": [{ "apiKeyAuth": [] }]
       }
     },
+    "/recentRides": {
+      "get": {
+        "summary": "Get Recent Rides",
+        "description": "Retrieves a list of recent rides within the last `n` days. Defaults to 1 day if not specified.",
+        "operationId": "getRecentRides",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Number of past days to retrieve rides from (default: 1).",
+            "required": false,
+            "schema": { "type": "integer", "default": 1 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of recent activities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityList"
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    },
     "/activity": {
       "get": {
         "summary": "Get User Activity List",
