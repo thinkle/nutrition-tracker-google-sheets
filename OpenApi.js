@@ -1,6 +1,6 @@
 function getOpenApiSpec() {
   const baseUrl = getDeployedWebAppUrl();
-  
+
 
   const logItemSchema = {
     type: "object",
@@ -94,12 +94,12 @@ function getOpenApiSpec() {
         "200": {
           description: "Log entry updated successfully."
         },
-        "404": { 
+        "404": {
           description: "Log entry not found."
-        }        
+        }
       }
     },
-    delete : {
+    delete: {
       operationId: "deleteLog",
       summary: "Delete an existing log entry",
       description: "Delete an existing entry in the API.",
@@ -124,9 +124,9 @@ function getOpenApiSpec() {
         "200": {
           description: "Log entry deleted successfully."
         },
-        "404": { 
+        "404": {
           description: "Log entry not found."
-        }        
+        }
       }
     }
   };
@@ -192,7 +192,37 @@ function getOpenApiSpec() {
         Batch: batchSchema,
         SummaryItem: {
           type: "object",
-          ...buildPropertiesSchemaForLog()
+          properties: {
+            Date: { type: "string", format: "date", description: "Summary date (YYYY-MM-DD)" },
+            gross_kcal: { type: "number", description: "Gross calories consumed" },
+            adjusted_kcal: { type: "number", description: "Adjusted calories (subtracting only carb burn)" },
+            net_kcal: { type: "number", description: "Net calories (after exercise/calorie burn)" },
+            total_protein: { type: "number", description: "Total protein (grams)" },
+            total_fat: { type: "number", description: "Total fat (grams)" },
+            gross_carbs: { type: "number", description: "Gross carbohydrates (grams)" },
+            net_carbs: { type: "number", description: "Net carbohydrates (grams)" },
+            total_added_sugar: { type: "number", description: "Total added sugar (grams)" },
+            total_fiber: { type: "number", description: "Total fiber (grams)" },
+            total_alcohol: { type: "number", description: "Total alcohol (grams)" },
+            kcal_burned: { type: "number", description: "Calories burned (exercise)" },
+            carbs_burned: { type: "number", description: "Carbohydrates burned (grams)" }
+          },
+          required: [
+            "Date",
+            "gross_kcal",
+            "adjusted_kcal",
+            "net_kcal",
+            "total_protein",
+            "total_fat",
+            "gross_carbs",
+            "net_carbs",
+            "total_added_sugar",
+            "total_fiber",
+            "total_alcohol",
+            "kcal_burned",
+            "carbs_burned"
+          ],
+          description: "Represents a daily nutrition summary with calories, macros, and burn data."
         },
         MetricsItem: {
           type: "object",
@@ -250,7 +280,46 @@ function getOpenApiSpec() {
         ...postLogsDocs
       },
       "/summaries": {
-        ...summariesDocs
+        get: {
+          operationId: "summaries",
+          summary: "Fetch summaries",
+          description: "Fetch summary data from the API.",
+          responses: {
+            "200": {
+              description: "Successful response with summary data.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "array",
+                    items: { $ref: "#/components/schemas/SummaryItem" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/today": {
+        get: {
+          operationId: "getTodaySummary",
+          summary: "Get today’s nutrition summary",
+          description: "Returns the nutrition summary for the current day only.",
+          responses: {
+            "200": {
+              description: "Today’s summary object",
+              content: {
+                "application/json": {
+                  schema: {
+                    "$ref": "#/components/schemas/SummaryItem"
+                  }
+                }
+              }
+            },
+            "404": {
+              description: "No summary found for today"
+            }
+          }
+        }
       },
       "/metrics": {
         get: {

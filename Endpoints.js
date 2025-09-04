@@ -14,7 +14,7 @@ function sendJsonResponse(obj, status = 200) {
   }
   return ContentService
     .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);    
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 /************************************************
@@ -81,6 +81,8 @@ function internalDoGet(e) {
   try {
     if (path === 'summaries') {
       return handleGetSummaries(ss);
+    } else if (path === 'todays_summary' || path === 'today') {
+      return handleGetTodaySummary(ss);
     } else if (path === 'logs' || path === 'log') {
       return handleGetLogs(e, ss);
     } else if (path === 'metrics') {
@@ -89,7 +91,7 @@ function internalDoGet(e) {
       return handleGetGoals(ss);
     } else if (path === 'goals/history') {
       return handleGetGoalHistory(ss);
-    } else if (path=='favicon.ico') {
+    } else if (path == 'favicon.ico') {
       return HtmlService.createHtmlOutput(`
         <html>
           <head>
@@ -215,6 +217,37 @@ function handleGetSummaries(ss) {
   const summarySheet = ss.getSheetByName('Summary');
   const summaries = readSummaries(summarySheet);
   return sendJsonResponse(summaries);
+}
+
+function handleGetTodaySummary(ss) {
+  const summarySheet = ss.getSheetByName('Summary');
+  const summaries = readSummaries(summarySheet);
+  const today = new Date();
+  const pad = n => n.toString().padStart(2, '0');
+  const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  // Try to find a summary for today (assuming a 'Date' field in summaries)
+  const formatDate = d => {
+    if (d instanceof Date) {
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    } else if (typeof d === 'string') {
+      return d;
+    } else {
+      return String(d);
+    }
+  };
+  const todaysSummary = Array.isArray(summaries)
+    ? summaries.find(s => {
+      let dateField = s.Date || s.date;
+      if (!dateField) return false;
+      const formatted = formatDate(dateField);
+      return formatted.startsWith(todayStr);
+    })
+    : null;
+  if (todaysSummary) {
+    return sendJsonResponse(todaysSummary);
+  } else {
+    return sendJsonResponse({ error: 'No summary found for today', date: todayStr }, 404);
+  }
 }
 
 function handleGetMetrics(e, ss) {
