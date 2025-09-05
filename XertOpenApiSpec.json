@@ -11,7 +11,7 @@
       "description": "Cloudflare Worker API proxying Xert"
     }
   ],
-  "security": [ { "apiKeyAuth": [] } ],
+  "security": [{ "apiKeyAuth": [] }],
   "paths": {
     "/training_info": {
       "get": {
