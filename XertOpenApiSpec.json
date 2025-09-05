@@ -11,6 +11,7 @@
       "description": "Cloudflare Worker API proxying Xert"
     }
   ],
+  "security": [ { "apiKeyAuth": [] } ],
   "paths": {
     "/training_info": {
       "get": {
@@ -283,6 +284,49 @@
           },
           "400": { "description": "Invalid JSON body." },
           "401": { "description": "Unauthorized or login verification failed." }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    },
+    "/schedule-workout": {
+      "post": {
+        "summary": "Schedule a workout on the user's Xert calendar",
+        "description": "Creates a calendar event in Xert for a workout. Requires cookie+CSRF session established by the worker.",
+        "operationId": "scheduleWorkout",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleWorkoutRequest"
+              },
+              "example": {
+                "id": "7hpsgu9xzmwhqvua",
+                "type": "workout",
+                "start_date": "2025-09-04T22:21:00",
+                "end_date": "2025-09-04T22:21:00",
+                "forUser": "tmh",
+                "from_xata": 0,
+                "options": ""
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Xert response (typically JSON)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleWorkoutResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized or login verification failed."
+          },
+          "400": { "description": "Invalid JSON body." }
         },
         "security": [{ "apiKeyAuth": [] }]
       }
@@ -634,6 +678,71 @@
             "required": ["duration", "target"]
           }
         ]
+      },
+      "ScheduleWorkoutRequest": {
+        "type": "object",
+        "description": "Payload to create a calendar event in Xert. Dates are ISO-8601. Type is usually 'workout'.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Workout ID (path) to schedule"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["workout"],
+            "description": "Event type"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start date/time (ISO-8601)"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date-time",
+            "description": "End date/time (ISO-8601)"
+          },
+          "forUser": {
+            "type": "string",
+            "description": "Username (optional, defaults to current user)"
+          },
+          "from_xata": {
+            "type": "integer",
+            "enum": [0, 1],
+            "description": "Flag used by site (pass 0)"
+          },
+          "options": {
+            "type": "string",
+            "description": "Optional options string (pass empty string if unknown)"
+          }
+        },
+        "required": ["id", "type", "start_date", "end_date"]
+      },
+      "ScheduleWorkoutResponse": {
+        "type": "object",
+        "description": "Normalized response for scheduling. The worker passes through upstream data but may include a best-effort eventId.",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "True if the upstream call succeeded (HTTP 200)."
+          },
+          "eventId": {
+            "type": "string",
+            "nullable": true,
+            "description": "Identifier of the created calendar event if available."
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Raw upstream JSON body."
+          }
+        },
+        "required": ["success", "data"],
+        "example": {
+          "success": true,
+          "eventId": "abc123",
+          "data": { "id": "abc123", "status": "ok" }
+        }
       }
     },
     "securitySchemes": {

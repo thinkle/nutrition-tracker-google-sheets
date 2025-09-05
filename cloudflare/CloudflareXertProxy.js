@@ -12,6 +12,8 @@ export default {
       return new Response("Unauthorized", { status: 403 });
     }
 
+
+
     // 🔐 Load credentials from Cloudflare KV
     const XERT_USERNAME = await SECRET_STORE.get("XERT_USERNAME");
     const XERT_PASSWORD = await SECRET_STORE.get("XERT_PASSWORD");
@@ -152,6 +154,75 @@ export default {
 
       return { importCsrf, uploadHeaders };
     };
+
+    // ✅ NEW: Schedule a workout on the user's calendar via cookie+CSRF flow
+    if (path === "/schedule-workout" && request.method === "POST") {
+      try {
+        // Establish session + cookies
+        await loginAndGetImportContext();
+      } catch (e) {
+        const msg = (e && e.message) ? e.message : String(e);
+        return new Response(msg, { status: 401 });
+      }
+
+      // Parse incoming payload
+      let payload;
+      try {
+        payload = await request.json();
+      } catch (_) {
+        return new Response("Invalid JSON body", { status: 400 });
+      }
+
+      // If a preferred forUser alias is configured, enforce it; otherwise omit to use session user
+      try {
+        const preferredForUser = await SECRET_STORE.get("XERT_FORUSER");
+        if (preferredForUser && typeof preferredForUser === "string" && preferredForUser.trim()) {
+          payload.forUser = preferredForUser.trim();
+        } else if (Object.prototype.hasOwnProperty.call(payload, "forUser")) {
+          delete payload.forUser;
+        }
+      } catch (_) { /* ignore */ }
+
+      // Build headers for XHR-style JSON request
+      const xsrf = cookieJar["XSRF-TOKEN"];
+      const headers = new Headers({
+        "Accept": "*/*",
+        "Content-Type": "application/json",
+        "Origin": "https://www.xertonline.com",
+        "Referer": "https://www.xertonline.com/workouts",
+        "X-Requested-With": "XMLHttpRequest",
+        "Cookie": buildCookieHeader()
+      });
+      if (xsrf) {
+        headers.set("x-csrf-token", xsrf);
+        headers.set("X-XSRF-TOKEN", xsrf);
+      }
+
+      const resp = await fetch("https://www.xertonline.com/createCalendarEvent", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      const contentType = (resp.headers.get("Content-Type") || "application/json").toLowerCase();
+      let upstream;
+      try {
+        upstream = contentType.includes("application/json") ? await resp.json() : await resp.text();
+      } catch (_) {
+        upstream = await resp.text();
+      }
+      // Best-effort event id extraction
+      let eventId = null;
+      if (upstream && typeof upstream === "object") {
+        eventId = upstream.eventId || upstream.id || upstream.event_id || null;
+      }
+      const body = {
+        success: resp.ok,
+        eventId,
+        data: upstream
+      };
+      return new Response(JSON.stringify(body), { status: resp.status, headers: { "Content-Type": "application/json" } });
+    }
 
     // ✅ NEW: Handle `/recentRides?days=n`
     if (path === "/recentRides") {
