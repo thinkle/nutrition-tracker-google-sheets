@@ -3,7 +3,7 @@
   "info": {
     "title": "Xert Cloudflare Proxy API",
     "description": "A Cloudflare Worker that securely proxies Xert API requests.",
-    "version": "1.4"
+    "version": "1.5"
   },
   "servers": [
     {
@@ -216,6 +216,76 @@
         },
         "security": [{ "apiKeyAuth": [] }]
       }
+    },
+    "/import-workout-file": {
+      "post": {
+        "summary": "Import workout file (ZWO/ERG) via Xert",
+        "description": "Proxies a multipart/form-data upload to Xert's /workouts/import using a cookie+CSRF login flow. Provide one or more files via files[].",
+        "operationId": "importWorkoutFile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files[]": {
+                    "type": "array",
+                    "items": { "type": "string", "format": "binary" },
+                    "description": "One or more workout files (e.g., .zwo)."
+                  },
+                  "convert_above_ftp": {
+                    "type": "string",
+                    "description": "Conversion for above-FTP segments (default: mmp)"
+                  },
+                  "convert_below_ftp": {
+                    "type": "string",
+                    "description": "Conversion for below-FTP segments (default: xssr)"
+                  }
+                },
+                "required": ["files[]"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upstream HTML response from Xert",
+            "content": {
+              "text/html": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "description": "No file provided or invalid request." },
+          "401": { "description": "Unauthorized or login verification failed." }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
+    },
+    "/import-workout-json": {
+      "post": {
+        "summary": "Import workout defined in JSON (server generates ZWO and uploads)",
+        "description": "Accepts a simple JSON workout definition and uploads it to Xert by generating a ZWO file server-side, then using the same cookie+CSRF flow as the file upload.",
+        "operationId": "importWorkoutJson",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UploadJsonWorkout" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upstream HTML response from Xert",
+            "content": {
+              "text/html": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "description": "Invalid JSON body." },
+          "401": { "description": "Unauthorized or login verification failed." }
+        },
+        "security": [{ "apiKeyAuth": [] }]
+      }
     }
   },
   "components": {
@@ -284,6 +354,286 @@
             }
           }
         }
+      },
+      "UploadJsonWorkout": {
+        "type": "object",
+        "description": "Workout definition used by /import-workout-json. Notes: All durations are seconds. All power fields (target, start, end, onPower, offPower) are fractions of FTP (e.g., 0.5 = 50% of FTP, 1.0 = 100% of FTP). Cadence values are in RPM. Freeride has no target power (ERG off).",
+        "properties": {
+          "name": { "type": "string", "description": "Workout name" },
+          "description": {
+            "type": "string",
+            "description": "Optional workout description"
+          },
+          "steps": {
+            "type": "array",
+            "description": "Ordered list of workout steps. See WorkoutStep variants for fields and units (power is a fraction of FTP; duration is seconds).",
+            "items": { "$ref": "#/components/schemas/WorkoutStep" }
+          },
+          "textEvents": {
+            "type": "array",
+            "description": "Optional text messages shown at absolute offsets (seconds)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "timeOffset": {
+                  "type": "integer",
+                  "description": "Offset in seconds"
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Text to display in the workout UI"
+                }
+              },
+              "required": ["timeOffset", "message"]
+            }
+          }
+        },
+        "required": ["steps"],
+        "example": {
+          "name": "Sample Worker Workout",
+          "steps": [
+            { "type": "warmup", "duration": 300, "start": 0.5, "end": 0.7 },
+            {
+              "type": "steady",
+              "duration": 600,
+              "target": 0.85,
+              "cadence": 90
+            },
+            {
+              "type": "intervalst",
+              "repeat": 3,
+              "onDuration": 120,
+              "offDuration": 60,
+              "onPower": 1.1,
+              "offPower": 0.55,
+              "cadence": 95
+            },
+            { "type": "ramp", "duration": 180, "start": 0.7, "end": 1.0 },
+            { "type": "freeride", "duration": 120 },
+            { "type": "cooldown", "duration": 300, "start": 0.6, "end": 0.4 }
+          ],
+          "textEvents": [{ "timeOffset": 60, "message": "Drink" }]
+        }
+      },
+      "WorkoutStep": {
+        "description": "One of the supported step types. Units: duration/onDuration/offDuration are seconds. All power values (target/start/end/onPower/offPower) are fractions of FTP (0.5 = 50% FTP). Cadence values are RPM. Freeride has no power target (ERG off).",
+        "oneOf": [
+          {
+            "type": "object",
+            "title": "Steady",
+            "description": "Fixed target power for the duration.",
+            "properties": {
+              "type": { "const": "steady" },
+              "duration": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Duration in seconds"
+              },
+              "target": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Target power as a fraction of FTP (e.g., 0.65 = 65% FTP)"
+              },
+              "cadence": {
+                "type": "integer",
+                "minimum": 30,
+                "maximum": 140,
+                "description": "Cadence in RPM (optional)"
+              }
+            },
+            "required": ["duration", "target"]
+          },
+          {
+            "type": "object",
+            "title": "Warmup",
+            "description": "Linear ramp from start to end power (increasing).",
+            "properties": {
+              "type": { "const": "warmup" },
+              "duration": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Duration in seconds"
+              },
+              "start": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Starting power as a fraction of FTP"
+              },
+              "end": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Ending power as a fraction of FTP"
+              },
+              "cadence": {
+                "type": "integer",
+                "minimum": 30,
+                "maximum": 140,
+                "description": "Cadence in RPM (optional)"
+              }
+            },
+            "required": ["duration", "start", "end"]
+          },
+          {
+            "type": "object",
+            "title": "Cooldown",
+            "description": "Linear ramp from start to end power (decreasing).",
+            "properties": {
+              "type": { "const": "cooldown" },
+              "duration": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Duration in seconds"
+              },
+              "start": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Starting power as a fraction of FTP"
+              },
+              "end": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Ending power as a fraction of FTP"
+              },
+              "cadence": {
+                "type": "integer",
+                "minimum": 30,
+                "maximum": 140,
+                "description": "Cadence in RPM (optional)"
+              }
+            },
+            "required": ["duration", "start", "end"]
+          },
+          {
+            "type": "object",
+            "title": "Ramp",
+            "description": "Linear ramp; mapped to Warmup (increasing) or Cooldown (decreasing) for compatibility.",
+            "properties": {
+              "type": { "const": "ramp" },
+              "duration": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Duration in seconds"
+              },
+              "start": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Starting power as a fraction of FTP"
+              },
+              "end": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Ending power as a fraction of FTP"
+              },
+              "cadence": {
+                "type": "integer",
+                "minimum": 30,
+                "maximum": 140,
+                "description": "Cadence in RPM (optional)"
+              }
+            },
+            "required": ["duration", "start", "end"]
+          },
+          {
+            "type": "object",
+            "title": "IntervalsT",
+            "description": "On/Off repeats with separate power targets.",
+            "properties": {
+              "type": { "const": "intervalst" },
+              "repeat": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Number of work/recovery repeats"
+              },
+              "onDuration": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Work duration in seconds"
+              },
+              "offDuration": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Recovery duration in seconds"
+              },
+              "onPower": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Work power as a fraction of FTP"
+              },
+              "offPower": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Recovery power as a fraction of FTP"
+              },
+              "cadence": {
+                "type": "integer",
+                "minimum": 30,
+                "maximum": 140,
+                "description": "Target cadence during work (RPM, optional)"
+              },
+              "cadenceResting": {
+                "type": "integer",
+                "minimum": 30,
+                "maximum": 140,
+                "description": "Target cadence during recovery (RPM, optional)"
+              }
+            },
+            "required": [
+              "repeat",
+              "onDuration",
+              "offDuration",
+              "onPower",
+              "offPower"
+            ]
+          },
+          {
+            "type": "object",
+            "title": "FreeRide",
+            "description": "Free riding without a power target (ERG off).",
+            "properties": {
+              "type": { "const": "freeride" },
+              "duration": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Duration in seconds"
+              }
+            },
+            "required": ["duration"]
+          },
+          {
+            "type": "object",
+            "title": "LegacySteady (back-compat)",
+            "description": "Backwards-compatible form with no explicit type (treated as steady).",
+            "properties": {
+              "duration": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Duration in seconds"
+              },
+              "target": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Target power as a fraction of FTP"
+              },
+              "cadence": {
+                "type": "integer",
+                "minimum": 30,
+                "maximum": 140,
+                "description": "Cadence in RPM (optional)"
+              }
+            },
+            "required": ["duration", "target"]
+          }
+        ]
       }
     },
     "securitySchemes": {
