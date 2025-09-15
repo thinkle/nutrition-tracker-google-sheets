@@ -91,6 +91,16 @@ function internalDoGet(e) {
       return handleGetGoals(ss);
     } else if (path === 'goals/history') {
       return handleGetGoalHistory(ss);
+    } else if (path === 'strength/workouts') {
+      return handleGetStrengthWorkouts(e);
+    } else if (path === 'strength/exercises') {
+      return handleGetStrengthExercises();
+    } else if (path === 'strength/workout') {
+      return handleGetStrengthWorkout(e);
+    } else if (path === 'strength/today') {
+      return handleGetStrengthToday();
+    } else if (path === 'strength/exerciseData') {
+      return handleGetStrengthExerciseData(e);
     } else if (path == 'favicon.ico') {
       return HtmlService.createHtmlOutput(`
         <html>
@@ -133,6 +143,8 @@ function internalDoPost(e) {
       return handlePostMetrics(e, ss);
     } else if (path === 'goals') {
       return handlePostGoals(e, ss);
+    } else if (path === 'logStrengthWorkout') {
+      return handlePostStrengthWorkout(e);
     }
   } catch (error) {
     const errorDetails = {

@@ -1,3 +1,5 @@
+/* exported getOpenApiSpec */
+/* global getDeployedWebAppUrl, FIXED_FIELDS_SPEC, NUTRIENTS_SPEC, METRICS_SPEC, GOALS_SPEC */
 function getOpenApiSpec() {
   const baseUrl = getDeployedWebAppUrl();
 
@@ -152,33 +154,14 @@ function getOpenApiSpec() {
     }
   };
 
-  const summariesDocs = {
-    get: {
-      operationId: "summaries",
-      summary: "Fetch summaries",
-      description: "Fetch summary data from the API.",
-      responses: {
-        "200": {
-          description: "Successful response with summary data.",
-          content: {
-            "application/json": {
-              schema: {
-                type: "array",
-                items: { $ref: "#/components/schemas/SummaryItem" }
-              }
-            }
-          }
-        }
-      }
-    }
-  };
+
 
   return {
     openapi: "3.1.0",
     info: {
       title: "Nutrition Tracker API",
-      version: "1.1.0",
-      description: "API for tracking nutritional data."
+      version: "1.2.0",
+      description: "API for tracking nutritional data and strength workouts. Unless otherwise stated, all weight values are expressed in pounds (lb)."
     },
     servers: [
       {
@@ -233,6 +216,117 @@ function getOpenApiSpec() {
           type: "object",
           ...buildPropertiesSchemaForGoals(),
           description: "Represents a single goals entry."
+        },
+        StrengthWorkoutSummary: {
+          type: "object",
+          properties: {
+            ID: { type: "integer" },
+            Date: { type: "string", format: "date" },
+            TemplateName: { type: "string" },
+            TrainingTime: { type: "integer" },
+            Calories: { type: "integer" },
+            TotalCapacity: { type: "number" },
+            MaxWeight: { type: "integer", description: "Maximum weight used across sets (lb)" },
+            AvgWeight: { type: "integer", description: "Average weight across sets (lb)" },
+            FinishActionCount: { type: "integer" },
+            EndTimestamp: { type: "integer" }
+          },
+          description: "Compact strength workout summary."
+        },
+        StrengthSet: {
+          type: "object",
+          properties: {
+            WorkoutID: { type: "integer" },
+            ExerciseInstanceID: { type: "integer" },
+            ActionLibraryId: { type: "integer" },
+            ExerciseName: { type: "string" },
+            SetIndex: { type: "integer" },
+            LeftRight: { type: "integer" },
+            TargetCount: { type: "integer" },
+            FinishedCount: { type: "integer" },
+            Time: { type: "integer" },
+            Capacity: { type: "number" },
+            AvgWeight: { type: "integer" },
+            MaxWeight: { type: "integer", description: "Max weight for this set (lb)" },
+            MinWeight: { type: "integer", description: "Min weight for this set (lb)" },
+            WeightDetail: { type: "string", description: "Provider-specific serialized detail; weight values inside are in lb" },
+            StartTime: { type: "string" },
+            EndTime: { type: "string" },
+            startTimestamp: { type: "integer" },
+            endTimestamp: { type: "integer" },
+            Calorie: { type: "integer" },
+            TotalCapacity: { type: "number" },
+            TrainingPartId2: { type: "integer" },
+            CategoryId: { type: "integer" },
+            Img: { type: "string" },
+            CompletionMethod: { type: "integer" },
+            SelectCompletionMethod: { type: "integer" },
+            FinishGroupCount: { type: "integer" },
+            IsFinish: { type: "integer" }
+          },
+          description: "A single performed set from a strength workout."
+        },
+        StrengthExercise: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            actionLibraryId: { type: "integer" },
+            actionLibraryName: { type: "string" },
+            categoryId: { type: "integer" },
+            trainingPartId2: { type: "integer" },
+            startTimestamp: { type: "integer" },
+            endTimestamp: { type: "integer" },
+            finishedReps: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  ix: { type: "integer" },
+                  avgWeight: { type: "integer", description: "Average weight for the rep/set (lb)" },
+                  finishedCount: { type: "integer" },
+                  targetCount: { type: "integer" },
+                  time: { type: "integer" },
+                  capacity: { type: "number" },
+                  leftRight: { type: "integer" },
+                  isFinish: { type: "boolean" },
+                  weightDetail: { type: "string" }
+                }
+              }
+            }
+          }
+        },
+        StrengthIngestData: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            templateId: { type: "integer" },
+            templateName: { type: "string" },
+            trainingTime: { type: "integer" },
+            calorie: { type: "integer" },
+            totalCapacity: { type: "number" },
+            startTimestamp: { type: "integer" },
+            endTimestamp: { type: "integer" },
+            nowTrainingTime: { type: "integer" },
+            nowCalorie: { type: "integer" },
+            nowTotalCapacity: { type: "number" },
+            uuid: { type: "string" },
+            dataVersion: { type: "integer" },
+            deviceType: { type: "integer" },
+            cttActionLibraryTrainingInfoList: {
+              type: "array",
+              items: { $ref: "#/components/schemas/StrengthExercise" }
+            }
+          },
+          required: ["id"]
+        },
+        StrengthIngestWrapper: {
+          type: "object",
+          properties: {
+            code: { type: "integer" },
+            message: { type: "string" },
+            data: { $ref: "#/components/schemas/StrengthIngestData" }
+          },
+          required: ["data"]
         }
       }
     },
@@ -414,6 +508,79 @@ function getOpenApiSpec() {
             }
           }
         }
+      },
+      "/logStrengthWorkout": {
+        post: {
+          operationId: "logStrengthWorkout",
+          summary: "Ingest a Speediance workout",
+          description: "Upload the workout JSON (wrapper with data or raw data) to store workout and performed sets.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  oneOf: [
+                    { $ref: "#/components/schemas/StrengthIngestWrapper" },
+                    { $ref: "#/components/schemas/StrengthIngestData" }
+                  ]
+                }
+              }
+            }
+          },
+          responses: {
+            "201": { description: "Workout created." },
+            "200": { description: "Workout updated." },
+            "400": { description: "Validation error." }
+          }
+        }
+      },
+      "/strength/workouts": {
+        get: {
+          operationId: "listStrengthWorkouts",
+          summary: "List strength workouts",
+          parameters: [
+            { name: "startDate", in: "query", required: false, schema: { type: "string", format: "date" } },
+            { name: "endDate", in: "query", required: false, schema: { type: "string", format: "date" } }
+          ],
+          responses: {
+            "200": { description: "Array of workout summaries", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/StrengthWorkoutSummary" } } } } }
+          }
+        }
+      },
+      "/strength/exercises": {
+        get: {
+          operationId: "listStrengthExercises",
+          summary: "List distinct exercises",
+          responses: {
+            "200": { description: "Array of exercises" }
+          }
+        }
+      },
+      "/strength/workout": {
+        get: {
+          operationId: "getStrengthWorkout",
+          summary: "Get one workout with its sets",
+          parameters: [{ name: "id", in: "query", required: true, schema: { type: "integer" } }],
+          responses: { "200": { description: "Workout and sets" }, "404": { description: "Not found" } }
+        }
+      },
+      "/strength/today": {
+        get: {
+          operationId: "getStrengthToday",
+          summary: "Workouts in the last 24 hours",
+          responses: { "200": { description: "Array of workouts" } }
+        }
+      },
+      "/strength/exerciseData": {
+        get: {
+          operationId: "getExerciseData",
+          summary: "All set rows for an exercise",
+          parameters: [
+            { name: "exerciseId", in: "query", required: false, schema: { type: "string" } },
+            { name: "exerciseName", in: "query", required: false, schema: { type: "string" } }
+          ],
+          responses: { "200": { description: "Array of set rows", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/StrengthSet" } } } } }, "400": { description: "Missing parameters" } }
+        }
       }
     }
   };
@@ -451,6 +618,8 @@ function buildPropertiesSchemaForLog() {
     description: "Represents a single log entry for tracking nutritional data."
   };
 }
+
+// (no-op) previously had a helper to map header arrays to schema; not needed now
 
 /**
  * Dynamically build the properties schema for METRICS_SPEC.

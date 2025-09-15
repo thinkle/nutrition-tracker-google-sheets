@@ -7,6 +7,8 @@ function onOpen() {
     .addItem('Setup Spreadsheet', 'setupSpreadsheet')
     .addItem('Setup Metrics Sheet', 'setupMetricsSheet')
     .addItem('Setup Goals Sheet', 'setupGoalsSheet')
+    .addSeparator()
+    .addItem('Setup Strength Sheets', 'setupStrengthSheets')
     .addItem('Get API Info', 'showApiInfo')
     .addToUi();
 }
