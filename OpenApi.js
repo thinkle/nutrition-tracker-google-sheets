@@ -228,10 +228,11 @@ function getOpenApiSpec() {
             TotalCapacity: { type: "number" },
             MaxWeight: { type: "integer", description: "Maximum weight used across sets (lb)" },
             AvgWeight: { type: "integer", description: "Average weight across sets (lb)" },
+            weightUnit: { type: "string", enum: ["lb"], description: "Unit for all weight fields (always 'lb')" },
             FinishActionCount: { type: "integer" },
             EndTimestamp: { type: "integer" }
           },
-          description: "Compact strength workout summary."
+          description: "Compact strength workout summary. All weight values are in pounds (lb); see 'weightUnit'."
         },
         StrengthSet: {
           type: "object",
@@ -246,9 +247,10 @@ function getOpenApiSpec() {
             FinishedCount: { type: "integer" },
             Time: { type: "integer" },
             Capacity: { type: "number" },
-            AvgWeight: { type: "integer" },
+            AvgWeight: { type: "integer", description: "Average weight for this set (lb)" },
             MaxWeight: { type: "integer", description: "Max weight for this set (lb)" },
             MinWeight: { type: "integer", description: "Min weight for this set (lb)" },
+            weightUnit: { type: "string", enum: ["lb"], description: "Unit for all weight fields (always 'lb')" },
             WeightDetail: { type: "string", description: "Provider-specific serialized detail; weight values inside are in lb" },
             StartTime: { type: "string" },
             EndTime: { type: "string" },
@@ -264,7 +266,17 @@ function getOpenApiSpec() {
             FinishGroupCount: { type: "integer" },
             IsFinish: { type: "integer" }
           },
-          description: "A single performed set from a strength workout."
+          description: "A single performed set from a strength workout. All weight values are in pounds (lb); see 'weightUnit'."
+        },
+        StrengthSetFilter: {
+          type: "object",
+          properties: {
+            daysBack: { type: "integer", description: "How many days back to include (default 7)" },
+            focus: { type: "string", description: "Comma-separated list of body part columns. Valid values: quads, hamstrings, glutes, chest, back, shoulders, arms, core, calves. Matches if any column is 1." },
+            movement: { type: "string", description: "Partial, case-insensitive match against Movement Type. Valid values: Squat (bilateral), Squat (unilateral), Hinge, Push (horizontal), Push (vertical), Pull (horizontal), Pull (vertical), Core (flexion), Core (extension), Core (rotation), Core (anti-rotation), Core (isometric), Isolation, Mobility, Stretch." },
+            exercise: { type: "string", description: "Partial, case-insensitive match against ExerciseName." }
+          },
+          description: "Filter object for strength set queries. See README or external docs for full field reference."
         },
         StrengthExercise: {
           type: "object",
@@ -513,16 +525,38 @@ function getOpenApiSpec() {
         post: {
           operationId: "logStrengthWorkout",
           summary: "Ingest a Speediance workout",
-          description: "Upload the workout JSON (wrapper with data or raw data) to store workout and performed sets.",
+          description: "Upload a Speediance workout. The payload must be an object with a 'data' property containing the workout. You may also POST the raw workout data object directly (without wrapper), but only the wrapper format is documented here.",
           requestBody: {
             required: true,
             content: {
               "application/json": {
-                schema: {
-                  oneOf: [
-                    { $ref: "#/components/schemas/StrengthIngestWrapper" },
-                    { $ref: "#/components/schemas/StrengthIngestData" }
-                  ]
+                schema: { $ref: "#/components/schemas/StrengthIngestWrapper" },
+                example: {
+                  code: 0,
+                  message: "OK",
+                  data: {
+                    id: 12345,
+                    templateId: 678,
+                    templateName: "Full Body Strength",
+                    startTimestamp: 1695859200,
+                    endTimestamp: 1695862800,
+                    cttActionLibraryTrainingInfoList: [
+                      {
+                        id: 1,
+                        actionLibraryId: 101,
+                        actionLibraryName: "Squat (bilateral)",
+                        categoryId: 1,
+                        finishedReps: [
+                          {
+                            ix: 1,
+                            avgWeight: 100,
+                            finishedCount: 10,
+                            isFinish: true
+                          }
+                        ]
+                      }
+                    ]
+                  }
                 }
               }
             }
@@ -538,7 +572,7 @@ function getOpenApiSpec() {
         get: {
           operationId: "getStrengthSets",
           summary: "Recommended: Query strength sets by time, focus, movement, or exercise.",
-          description: "This is the recommended endpoint for analyzing exercise history. Returns all strength set rows matching filters. Supports case-insensitive, partial matching for movementType and exercise. Focus columns use 'or' logic. If no filters are provided, returns all set rows.\n\nField Reference:\n- Main Focus: one of Quads, Hamstrings, Glutes, Chest, Back, Shoulders, Arms, Core, Calves.\n- Movement Type: one of Squat (bilateral), Squat (unilateral), Hinge, Push (horizontal), Push (vertical), Pull (horizontal), Pull (vertical), Core (flexion), Core (extension), Core (rotation), Core (anti-rotation), Core (isometric), Isolation, Mobility, Stretch.\n- Muscle flags (Quads, Hamstrings, Glutes, Chest, Back, Shoulders, Arms, Core, Calves): 1 if the exercise primarily trains that group, 0 otherwise.\n- Isolation lifts only flag a single muscle group.\n- Mobility and Stretch flag 0 for all muscle groups.\n- Do not mark stabilizers unless major contributors (e.g. Squat = Quads=1, Glutes=1; not every box).\n- Do not mark 'core' for squats or else every exercise will be tagged as core.",
+          description: "Recommended endpoint for analyzing exercise history. Returns all strength set rows matching filters. Supports case-insensitive, partial matching for movementType and exercise. Focus columns use 'or' logic. See StrengthSetFilter schema for valid filter fields and values.",
           parameters: [
             {
               name: "daysBack",
@@ -552,7 +586,7 @@ function getOpenApiSpec() {
               in: "query",
               required: false,
               schema: { type: "string" },
-              description: "Comma-separated list of body part columns (e.g. arms,shoulders,quads). Matches if any column is 1."
+              description: "Comma-separated list of body part columns. Valid values: quads, hamstrings, glutes, chest, back, shoulders, arms, core, calves. Matches if any column is 1."
             },
             {
               name: "movement",
@@ -593,7 +627,7 @@ function getOpenApiSpec() {
             { name: "endDate", in: "query", required: false, schema: { type: "string", format: "date" } }
           ],
           responses: {
-            "200": { description: "Array of workout summaries", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/StrengthWorkoutSummary" } } } } }
+            "200": { description: "Array of workout summaries. All weight values in the response are in pounds (lb); see 'weightUnit' property.", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/StrengthWorkoutSummary" } } } } }
           }
         }
       },
@@ -629,7 +663,7 @@ function getOpenApiSpec() {
             { name: "exerciseId", in: "query", required: false, schema: { type: "string" } },
             { name: "exerciseName", in: "query", required: false, schema: { type: "string" } }
           ],
-          responses: { "200": { description: "Array of set rows", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/StrengthSet" } } } } }, "400": { description: "Missing parameters" } }
+          responses: { "200": { description: "Array of set rows. All weight values in the response are in pounds (lb); see 'weightUnit' property.", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/StrengthSet" } } } } }, "400": { description: "Missing parameters" } }
         }
       }
     }

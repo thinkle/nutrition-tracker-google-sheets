@@ -69,6 +69,7 @@ function getStrengthSets(daysBack, opts) {
   const out = filtered.map(row => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = row[i]);
+    obj['weightUnit'] = 'lb'; // insert unit
     return obj;
   });
   return out;
@@ -483,6 +484,7 @@ function handleGetStrengthExerciseData(e) {
   const out = rows.map(r => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = r[i]);
+    obj['weightUnit'] = 'lb'; // insert unit
     return obj;
   });
   return sendJsonResponse(out);
