@@ -87,7 +87,7 @@ function handleGetStrengthSetsFilter(e) {
     movementType: movement,
     exercise: exercise
   });
-  return sendJsonResponse(out);
+  return out;
 }
 
 function testStrengthSetFilter() {
@@ -400,7 +400,7 @@ function handleGetStrengthExercises() {
       Img: row[idx['Img']],
     });
   });
-  return sendJsonResponse(out);
+  return out;
 }
 
 /** GET: /strength/workout?id=NNN - returns workout row and its sets */
@@ -461,7 +461,7 @@ function handleGetStrengthToday() {
       headers.forEach((h, i) => obj[h] = row[i]);
       return obj;
     });
-  return sendJsonResponse(items);
+  return items;
 }
 
 /** GET: /strength/exerciseData?exerciseId=...&exerciseName=... */
@@ -487,7 +487,7 @@ function handleGetStrengthExerciseData(e) {
     obj['weightUnit'] = 'lb'; // insert unit
     return obj;
   });
-  return sendJsonResponse(out);
+  return out;
 }
 
 

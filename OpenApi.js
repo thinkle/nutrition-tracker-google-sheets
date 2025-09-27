@@ -43,6 +43,20 @@ function getOpenApiSpec() {
           required: false,
           schema: { type: "string", format: "date" },
           description: "Filter logs by this date in YYYY-MM-DD format."
+        },
+        {
+          name: "limit",
+          in: "query",
+          required: false,
+          schema: { type: "integer", default: 50 },
+          description: "Maximum number of items to return (default 50)."
+        },
+        {
+          name: "offset",
+          in: "query",
+          required: false,
+          schema: { type: "integer", default: 0 },
+          description: "Number of items to skip before starting to return results (default 0)."
         }
       ],
       responses: {
@@ -51,8 +65,16 @@ function getOpenApiSpec() {
           content: {
             "application/json": {
               schema: {
-                type: "array",
-                items: { $ref: "#/components/schemas/LogItem" }
+                type: "object",
+                properties: {
+                  items: {
+                    type: "array",
+                    items: { $ref: "#/components/schemas/LogItem" }
+                  },
+                  total: { type: "integer", description: "Total number of items available." },
+                  limit: { type: "integer", description: "Limit applied to the result set." },
+                  offset: { type: "integer", description: "Offset applied to the result set." }
+                }
               }
             }
           }
@@ -390,14 +412,38 @@ function getOpenApiSpec() {
           operationId: "summaries",
           summary: "Fetch summaries",
           description: "Fetch summary data from the API.",
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
+            }
+          ],
           responses: {
             "200": {
               description: "Successful response with summary data.",
               content: {
                 "application/json": {
                   schema: {
-                    type: "array",
-                    items: { $ref: "#/components/schemas/SummaryItem" }
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/SummaryItem" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
                   }
                 }
               }
@@ -446,11 +492,41 @@ function getOpenApiSpec() {
               required: false,
               schema: { type: "string", format: "date" },
               description: "Filter metrics up to this date in YYYY-MM-DD format."
+            },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
             }
           ],
           responses: {
             "200": {
-              description: "Successful response. Returns metrics data."
+              description: "Successful response. Returns metrics data.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/MetricsItem" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
+                  }
+                }
+              }
             }
           }
         },
@@ -481,9 +557,41 @@ function getOpenApiSpec() {
           operationId: "getGoals",
           summary: "Fetch current goals from the API",
           description: "Retrieve the most recent goals for each category.",
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
+            }
+          ],
           responses: {
             "200": {
-              description: "Successful response. Returns current goals data."
+              description: "Successful response. Returns current goals data.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/GoalsItem" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
+                  }
+                }
+              }
             }
           }
         },
@@ -514,9 +622,41 @@ function getOpenApiSpec() {
           operationId: "getGoalHistory",
           summary: "Fetch goal history from the API",
           description: "Retrieve the full history of goals.",
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
+            }
+          ],
           responses: {
             "200": {
-              description: "Successful response. Returns goal history data."
+              description: "Successful response. Returns goal history data.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/GoalsItem" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
+                  }
+                }
+              }
             }
           }
         }
@@ -601,16 +741,38 @@ function getOpenApiSpec() {
               required: false,
               schema: { type: "string" },
               description: "Partial, case-insensitive match against ExerciseName."
+            },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
             }
           ],
           responses: {
             "200": {
-              description: "Array of matching set rows.",
+              description: "Paginated array of matching set rows.",
               content: {
                 "application/json": {
                   schema: {
-                    type: "array",
-                    items: { $ref: "#/components/schemas/StrengthSet" }
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/StrengthSet" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
                   }
                 }
               }
@@ -624,10 +786,42 @@ function getOpenApiSpec() {
           summary: "List strength workouts",
           parameters: [
             { name: "startDate", in: "query", required: false, schema: { type: "string", format: "date" } },
-            { name: "endDate", in: "query", required: false, schema: { type: "string", format: "date" } }
+            { name: "endDate", in: "query", required: false, schema: { type: "string", format: "date" } },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
+            }
           ],
           responses: {
-            "200": { description: "Array of workout summaries. All weight values in the response are in pounds (lb); see 'weightUnit' property.", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/StrengthWorkoutSummary" } } } } }
+            "200": {
+              description: "Paginated array of workout summaries. All weight values in the response are in pounds (lb); see 'weightUnit' property.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/StrengthWorkoutSummary" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -635,8 +829,42 @@ function getOpenApiSpec() {
         get: {
           operationId: "listStrengthExercises",
           summary: "List distinct exercises",
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
+            }
+          ],
           responses: {
-            "200": { description: "Array of exercises" }
+            "200": {
+              description: "Paginated array of exercises.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/StrengthExercise" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -645,14 +873,77 @@ function getOpenApiSpec() {
           operationId: "getStrengthWorkout",
           summary: "Get one workout with its sets",
           parameters: [{ name: "id", in: "query", required: true, schema: { type: "integer" } }],
-          responses: { "200": { description: "Workout and sets" }, "404": { description: "Not found" } }
+          responses: {
+            "200": {
+              description: "Workout and paginated sets.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      workout: { $ref: "#/components/schemas/StrengthWorkoutSummary" },
+                      sets: {
+                        type: "object",
+                        properties: {
+                          items: {
+                            type: "array",
+                            items: { $ref: "#/components/schemas/StrengthSet" }
+                          },
+                          total: { type: "integer" },
+                          limit: { type: "integer" },
+                          offset: { type: "integer" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "404": { description: "Not found" }
+          }
         }
       },
       "/strength/today": {
         get: {
           operationId: "getStrengthToday",
           summary: "Workouts in the last 24 hours",
-          responses: { "200": { description: "Array of workouts" } }
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Paginated array of workouts in the last 24 hours.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/StrengthWorkoutSummary" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       },
       "/strength/exerciseData": {
@@ -663,7 +954,46 @@ function getOpenApiSpec() {
             { name: "exerciseId", in: "query", required: false, schema: { type: "string" } },
             { name: "exerciseName", in: "query", required: false, schema: { type: "string" } }
           ],
-          responses: { "200": { description: "Array of set rows. All weight values in the response are in pounds (lb); see 'weightUnit' property.", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/StrengthSet" } } } } }, "400": { description: "Missing parameters" } }
+          parameters: [
+            { name: "exerciseId", in: "query", required: false, schema: { type: "string" } },
+            { name: "exerciseName", in: "query", required: false, schema: { type: "string" } },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip before starting to return results (default 0)."
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Paginated array of set rows. All weight values in the response are in pounds (lb); see 'weightUnit' property.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/StrengthSet" }
+                      },
+                      total: { type: "integer", description: "Total number of items available." },
+                      limit: { type: "integer", description: "Limit applied to the result set." },
+                      offset: { type: "integer", description: "Offset applied to the result set." }
+                    }
+                  }
+                }
+              }
+            },
+            "400": { description: "Missing parameters" }
+          }
         }
       }
     }

@@ -58,6 +58,24 @@ At the start of each session:
 - Let Speediance handle tracking; you focus on exercise mix, balance, and recovery tie-ins.
 
 ⸻
+
+📦 **Batching & Pagination Guidance**
+
+- If you get a "response too large" error, set a lower `limit` and retry.
+- **Never assume a single batch is complete unless the API response says so.**
+- Always check the `total` field in the response. If `total > items.length`, you need to fetch more.
+- To get all data:
+  1. Start with `limit=50&offset=0`.
+  2. If `items.length < total`, increment `offset` by `limit` and repeat until all items are fetched.
+  3. Combine all batches before analyzing or summarizing.
+- **Do not increase `limit` to try to get all data at once.** Always use batching.
+- If you need to process all data, loop through requests until `offset + items.length >= total`.
+- Example:
+  - First: `limit=50&offset=0`
+  - Next: `limit=50&offset=50`
+  - Continue until you have all items.
+
+⸻
 ⚙️ **Error Handling**
 
 - If API fails: flag timestamp, endpoint, payload for troubleshooting.

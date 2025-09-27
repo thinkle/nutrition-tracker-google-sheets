@@ -17,6 +17,21 @@ function sendJsonResponse(obj, status = 200) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+/**
+ * Generic pagination helper for array responses
+ */
+function paginateArray(array, e) {
+  var limit = (e && e.parameter && e.parameter.limit) ? parseInt(e.parameter.limit, 10) : 50;
+  var offset = (e && e.parameter && e.parameter.offset) ? parseInt(e.parameter.offset, 10) : 0;
+  var paged = array.slice(offset, offset + limit);
+  return {
+    items: paged,
+    total: array.length,
+    limit: limit,
+    offset: offset
+  };
+}
+
 /************************************************
  * Helper function to log requests to a "Requests" sheet
  ************************************************/
@@ -92,19 +107,19 @@ function internalDoGet(e) {
     } else if (path === 'goals/history') {
       return handleGetGoalHistory(ss);
     } else if (path === 'strength/workouts') {
-      return handleGetStrengthWorkouts(e);
+      return sendJsonResponse(paginateArray(handleGetStrengthWorkouts(e), e));
     } else if (path === 'strength/sets/filter') {
-      return handleGetStrengthSetsFilter(e);
+      return sendJsonResponse(paginateArray(handleGetStrengthSetsFilter(e), e));
     } else if (path === 'strength/sets') {
-      return handleGetStrengthSetsFilter(e);
+      return sendJsonResponse(paginateArray(handleGetStrengthSetsFilter(e), e));
     } else if (path === 'strength/exercises') {
-      return handleGetStrengthExercises();
+      return sendJsonResponse(paginateArray(handleGetStrengthExercises(e), e));
     } else if (path === 'strength/workout') {
       return handleGetStrengthWorkout(e);
     } else if (path === 'strength/today') {
-      return handleGetStrengthToday();
+      return sendJsonResponse(paginateArray(handleGetStrengthToday(e), e));
     } else if (path === 'strength/exerciseData') {
-      return handleGetStrengthExerciseData(e);
+      return sendJsonResponse(paginateArray(handleGetStrengthExerciseData(e), e));
     } else if (path == 'favicon.ico') {
       return HtmlService.createHtmlOutput(`
         <html>
@@ -128,6 +143,7 @@ function internalDoGet(e) {
   logError('Error in internalDoGet', { parameters: e.parameter, error: 'Unknown endpoint' });
   return sendJsonResponse({ error: 'Unknown endpoint', parameter: e.parameter, path }, 404);
 }
+
 
 function internalDoPost(e) {
   console.log('internalDoPost called with: ' + JSON.stringify(e.parameter));
@@ -224,15 +240,15 @@ function handleGetLogs(e, ss) {
     console.log('Filtering logs for date: ', dateParam);
     console.log('Dates we have are: ', logs.map((l) => formatAsDateString(l.Date)));
     const filtered = logs.filter(l => formatAsDateString(l.Date) === dateParam);
-    return sendJsonResponse(filtered);
+    return sendJsonResponse(paginateArray(filtered, e));
   }
-  return sendJsonResponse(logs);
+  return sendJsonResponse(paginateArray(logs, e));
 }
 
-function handleGetSummaries(ss) {
+function handleGetSummaries(ss, e) {
   const summarySheet = ss.getSheetByName('Summary');
   const summaries = readSummaries(summarySheet);
-  return sendJsonResponse(summaries);
+  return sendJsonResponse(paginateArray(summaries, e));
 }
 
 function handleGetTodaySummary(ss) {
@@ -271,7 +287,7 @@ function handleGetMetrics(e, ss) {
   const startDate = e.parameter.start_date;
   const endDate = e.parameter.end_date;
   const metrics = readMetrics(metricsSheet, startDate, endDate);
-  return sendJsonResponse(metrics);
+  return sendJsonResponse(paginateArray(metrics, e));
 }
 
 function handlePostMetrics(e, ss) {
@@ -281,10 +297,10 @@ function handlePostMetrics(e, ss) {
   return sendJsonResponse({ status: success ? 'created' : 'error' });
 }
 
-function handleGetGoals(ss) {
+function handleGetGoals(ss, e) {
   const goalsSheet = ss.getSheetByName('Goals');
   const currentGoals = getCurrentGoals(goalsSheet);
-  return sendJsonResponse(currentGoals);
+  return sendJsonResponse(paginateArray(currentGoals, e));
 }
 
 function handlePostGoals(e, ss) {
@@ -294,8 +310,8 @@ function handlePostGoals(e, ss) {
   return sendJsonResponse({ status: success ? 'created' : 'error' });
 }
 
-function handleGetGoalHistory(ss) {
+function handleGetGoalHistory(ss, e) {
   const goalsSheet = ss.getSheetByName('Goals');
   const goalHistory = getGoalHistory(goalsSheet);
-  return sendJsonResponse(goalHistory);
+  return sendJsonResponse(paginateArray(goalHistory, e));
 }
