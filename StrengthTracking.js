@@ -1,4 +1,103 @@
 /**
+ * GET /strength/sets/filter
+ * Query params:
+ *   daysBack: integer (optional, default 7)
+ *   focus: comma-separated list of body part columns (optional)
+ *   movement: string (optional, matches Movement Type)
+ *   exercise: string (optional, matches ExerciseName)
+ * Returns all sets matching filters ("or" logic for focus columns)
+ */
+/**
+ * Standalone filter for strength sets.
+ * @param {number} daysBack - How many days back to include
+ * @param {object} opts - { focus: [cols], movementType: str, exercise: str }
+ * @returns {Array<Object>} matching set rows
+ */
+function getStrengthSets(daysBack, opts) {
+  ensureStrengthSheetsExist_();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(SHEET_STRENGTH_SETS);
+  const data = sh.getDataRange().getValues();
+  const headers = data.shift();
+  const idx = {};
+  headers.forEach((h, i) => idx[h] = i);
+
+  opts = opts || {};
+  const focusCols = (opts.focus || []).map(s => s.trim().toLowerCase());
+  const movement = (opts.movementType || '').toLowerCase();
+  const exercise = (opts.exercise || '').toLowerCase();
+
+  // Date cutoff
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
+
+  // Find the timestamp column
+  const tsCol = idx['endTimestamp'] !== undefined ? 'endTimestamp' : 'EndTimestamp';
+
+  // Lowercase header map for focus matching
+  const headerMap = {};
+  headers.forEach((h, i) => headerMap[h.toLowerCase()] = i);
+
+  // Filter rows
+  const filtered = data.filter(row => {
+    // Date filter
+    const ts = Number(row[idx[tsCol]]);
+    if (!ts || new Date(ts * 1000) < cutoff) return false;
+
+    // Movement Type filter
+    if (movement && String(row[idx['Movement Type']] || '').toLowerCase().indexOf(movement) === -1) return false;
+
+    // ExerciseName filter
+    if (exercise && String(row[idx['ExerciseName']] || '').toLowerCase().indexOf(exercise) === -1) return false;
+
+    // Focus columns ("or" logic, case-insensitive)
+    if (focusCols.length) {
+      let found = false;
+      for (let col of focusCols) {
+        const i = headerMap[col];
+        if (i !== undefined && Number(row[i]) === 1) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) return false;
+    }
+    return true;
+  });
+
+  // Map to objects
+  const out = filtered.map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = row[i]);
+    return obj;
+  });
+  return out;
+}
+
+function handleGetStrengthSetsFilter(e) {
+  // Parse params
+  const daysBack = Number(e.parameter.daysBack || 7);
+  const focusRaw = e.parameter.focus || '';
+  const focusCols = focusRaw.split(',').map(s => s.trim()).filter(Boolean);
+  const movement = (e.parameter.movement || '');
+  const exercise = (e.parameter.exercise || '');
+  const out = getStrengthSets(daysBack, {
+    focus: focusCols,
+    movementType: movement,
+    exercise: exercise
+  });
+  return sendJsonResponse(out);
+}
+
+function testStrengthSetFilter() {
+  console.log('--- 7 days, arms/shoulders ---');
+  console.log(getStrengthSets(7, { focus: ['arms', 'shoulders'] }));
+  console.log('--- 14 days, movementType: Isolation ---');
+  console.log(getStrengthSets(14, { movementType: 'Isolation' }));
+  console.log('--- 21 days, exercise: squat ---');
+  console.log(getStrengthSets(21, { exercise: 'squat' }));
+}
+/**
  * Strength workout ingestion: POST /logStrengthWorkout
  * Accepts either the wrapper {code,message,data} or just the data object.
  * - Saves Strength Workouts row by ID (create/update)
@@ -388,3 +487,26 @@ function handleGetStrengthExerciseData(e) {
   });
   return sendJsonResponse(out);
 }
+
+
+
+// New end points for getting exercises... note that we have computed columns added to our 
+// workout sets that help with analysis.
+
+// Those columns look like this...
+// 
+/* Main Focus	Movement Type	Quads	Hams	Glutes	Chest	Back	Shoulders	Arms	Core	Calves
+Quads	 Squat (bilateral)	1	0	1	0	0	0	0	0	0
+Quads	 Squat (bilateral)	1	0	1	0	0	0	0	0	0
+Quads	 Squat (bilateral)	1	0	1	0	0	0	0	0	0
+*/
+// They are computed by an internal function with this prompt:
+/* =split(gemini("Generate a comma-separated list with the following fields:
+Main Focus, Movement Type, Quads, Hamstrings, Glutes, Chest, Back, Shoulders, Arms, Core, Calves.
+        •        Main Focus must always be one of: Quads, Hamstrings, Glutes, Chest, Back, Shoulders, Arms, Core, Calves.
+        •        Movement Type must always be one of: Squat (bilateral), Squat (unilateral), Hinge, Push (horizontal), Push (vertical), Pull (horizontal), Pull (vertical), Core (flexion), Core (extension), Core (rotation), Core (anti-rotation), Core (isometric), Isolation, Mobility, Stretch.
+        •        The muscle flags (Quads…Calves) are 1 if the exercise primarily trains that group, 0 otherwise.
+        •        Do not mark stabilizers unless they are major contributors (e.g. Squat = Quads=1, Glutes=1; not every box). i.e. Do not mark 'core' for squats or else we'll end up tagging every exercise as a core exercise
+        •        Isolation lifts should only flag a single muscle group.
+        •        Mobility and Stretch should flag 0 for all muscle groups.",A2),",")
+*/

@@ -93,6 +93,10 @@ function internalDoGet(e) {
       return handleGetGoalHistory(ss);
     } else if (path === 'strength/workouts') {
       return handleGetStrengthWorkouts(e);
+    } else if (path === 'strength/sets/filter') {
+      return handleGetStrengthSetsFilter(e);
+    } else if (path === 'strength/sets') {
+      return handleGetStrengthSetsFilter(e);
     } else if (path === 'strength/exercises') {
       return handleGetStrengthExercises();
     } else if (path === 'strength/workout') {

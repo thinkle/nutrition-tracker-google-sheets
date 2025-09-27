@@ -160,7 +160,7 @@ function getOpenApiSpec() {
     openapi: "3.1.0",
     info: {
       title: "Nutrition Tracker API",
-      version: "1.2.0",
+      version: "1.2.1",
       description: "API for tracking nutritional data and strength workouts. Unless otherwise stated, all weight values are expressed in pounds (lb)."
     },
     servers: [
@@ -531,6 +531,56 @@ function getOpenApiSpec() {
             "201": { description: "Workout created." },
             "200": { description: "Workout updated." },
             "400": { description: "Validation error." }
+          }
+        }
+      },
+      "/strength/sets": {
+        get: {
+          operationId: "getStrengthSets",
+          summary: "Recommended: Query strength sets by time, focus, movement, or exercise.",
+          description: "This is the recommended endpoint for analyzing exercise history. Returns all strength set rows matching filters. Supports case-insensitive, partial matching for movementType and exercise. Focus columns use 'or' logic. If no filters are provided, returns all set rows.\n\nField Reference:\n- Main Focus: one of Quads, Hamstrings, Glutes, Chest, Back, Shoulders, Arms, Core, Calves.\n- Movement Type: one of Squat (bilateral), Squat (unilateral), Hinge, Push (horizontal), Push (vertical), Pull (horizontal), Pull (vertical), Core (flexion), Core (extension), Core (rotation), Core (anti-rotation), Core (isometric), Isolation, Mobility, Stretch.\n- Muscle flags (Quads, Hamstrings, Glutes, Chest, Back, Shoulders, Arms, Core, Calves): 1 if the exercise primarily trains that group, 0 otherwise.\n- Isolation lifts only flag a single muscle group.\n- Mobility and Stretch flag 0 for all muscle groups.\n- Do not mark stabilizers unless major contributors (e.g. Squat = Quads=1, Glutes=1; not every box).\n- Do not mark 'core' for squats or else every exercise will be tagged as core.",
+          parameters: [
+            {
+              name: "daysBack",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 7 },
+              description: "How many days back to include (default 7)."
+            },
+            {
+              name: "focus",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Comma-separated list of body part columns (e.g. arms,shoulders,quads). Matches if any column is 1."
+            },
+            {
+              name: "movement",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Partial, case-insensitive match against Movement Type."
+            },
+            {
+              name: "exercise",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Partial, case-insensitive match against ExerciseName."
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Array of matching set rows.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "array",
+                    items: { $ref: "#/components/schemas/StrengthSet" }
+                  }
+                }
+              }
+            }
           }
         }
       },
