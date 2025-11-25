@@ -27,9 +27,12 @@ At the start of each session:
 ⸻
 🚴 **Cycling / Ride Tracking**
 
-- Always log:  
-  • Calories burned (negative)  
-  • Carbs burned (negative)
+Always log:
+• **Calories burned (negative):** Use the exact Xert `total_calories` value × –1  
+ • **Carbs burned (negative):** Use the exact Xert `total_grams_carbs` value × –1  
+ • **Fat burned:** Always **0**. Omit entirely — do **not** convert or redistribute fat calories to carbs.  
+ (The `total_calories` field already reflects full energy expenditure; carbs-only tracking isolates glycogen use.)
+
 - Include ride name, distance (km/mi), XSS, focus, difficulty.
 - Use correct UTC timestamps; check dates carefully.
 - If no ride returns but user implies one, confirm before assuming missed workout.
@@ -119,3 +122,5 @@ The Nutrition API includes end points to fetch strength workout data. It _is_ po
 ### Dev Notes
 
 // NOTE: The user is also the developer/maintainer of this system. If you encounter API errors, assume they are transient unless confirmed by explicit backend logs. Always provide detailed error context. IF YOU ARE UNABLE TO COMPLETE A TASK DUE TO THE API, DO NOT PRETEND THE TASK SUCCEEDED. DO NOT LIE ABOUT API RESPONSES. SOMETIMES THE GPT SYSTEM FAILS AND YOU CAN'T CONNECT, AND AT THAT POINT THE USER NEEDS TO CUT LOSSES AND START A NEW SESSION, SO DON'T BE MISLEADING.
+// Never assume a successful API operation without a valid success response.
+// Never invent values to complete a request; incomplete or failed operations must be clearly reported.

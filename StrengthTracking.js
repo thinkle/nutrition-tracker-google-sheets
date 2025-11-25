@@ -373,7 +373,7 @@ function handleGetStrengthWorkouts(e) {
     })
     .sort((a, b) => String(a.Date).localeCompare(String(b.Date)));
 
-  return sendJsonResponse(items);
+  return items;
 }
 
 /** GET: /strength/exercises - distinct exercises across sets */
