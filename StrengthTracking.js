@@ -106,7 +106,9 @@ function testStrengthSetFilter() {
  */
 
 function handlePostStrengthWorkout(e) {
+  const lock = LockService.getScriptLock();
   try {
+    lock.waitLock(30000); // Wait up to 30 seconds for other processes
     const raw = e.postData && e.postData.contents ? e.postData.contents : "{}";
     const parsed = JSON.parse(raw);
     const data = parsed && parsed.data ? parsed.data : parsed; // accept wrapper or raw
@@ -139,6 +141,8 @@ function handlePostStrengthWorkout(e) {
       { error: "Failed to ingest workout", message: err.message },
       500
     );
+  } finally {
+    try { lock.releaseLock(); } catch (e) { }
   }
 }
 
@@ -241,17 +245,13 @@ function replaceStrengthSets_(d) {
   const headers = STRENGTH_SETS_HEADERS;
   const idx = getStrengthSetsHeaderIndexMap();
 
-  // Delete existing rows for this WorkoutID (bottom-up)
+  // Get all existing rows for this WorkoutID
   const all = sh.getDataRange().getValues();
   const header = all.shift();
   const workoutIdCol = header.indexOf("WorkoutID");
-  for (let r = sh.getLastRow(); r >= 2; r--) {
-    const val = sh.getRange(r, workoutIdCol + 1).getValue();
-    if (String(val) === String(d.id)) {
-      sh.deleteRow(r);
-    }
-  }
+  const existingRows = all.filter(row => String(row[workoutIdCol]) === String(d.id));
 
+  // Build new rows from payload
   const exercises = Array.isArray(d.cttActionLibraryTrainingInfoList)
     ? d.cttActionLibraryTrainingInfoList
     : [];
@@ -261,7 +261,6 @@ function replaceStrengthSets_(d) {
   const rows = [];
   exercises.forEach((ex) => {
     const sets = Array.isArray(ex.finishedReps) ? ex.finishedReps : [];
-    // If no performed signal across exercise or any set, skip entirely
     if (!isPerformedExercise_(ex)) return;
     exercisesCount++;
     sets.forEach((set) => {
@@ -291,21 +290,41 @@ function replaceStrengthSets_(d) {
       row[idx["CategoryId"] - 1] = valOr_(ex.categoryId);
       row[idx["Img"] - 1] = valOr_(ex.img);
       row[idx["CompletionMethod"] - 1] = valOr_(ex.completionMethod);
-      row[idx["SelectCompletionMethod"] - 1] = valOr_(
-        set.selectCompletionMethod
-      );
+      row[idx["SelectCompletionMethod"] - 1] = valOr_(set.selectCompletionMethod);
       row[idx["FinishGroupCount"] - 1] = valOr_(ex.finishGroupCount);
       row[idx["IsFinish"] - 1] = set.isFinish ? 1 : 0;
       rows.push(row);
     });
   });
 
-  if (rows.length) {
-    const startRow = sh.getLastRow() + 1;
-    sh.getRange(startRow, 1, rows.length, headers.length).setValues(rows);
-    inserted = rows.length;
+  // Upsert logic: overwrite existing rows, append new ones
+  let updated = 0;
+  let appended = 0;
+  // Overwrite existing rows for this workout
+  for (let i = 0; i < Math.min(existingRows.length, rows.length); i++) {
+    // Only update if different
+    let isDifferent = false;
+    for (let j = 0; j < headers.length; j++) {
+      if (String(existingRows[i][j]) !== String(rows[i][j])) {
+        isDifferent = true;
+        break;
+      }
+    }
+    if (isDifferent) {
+      // Overwrite row in sheet
+      sh.getRange(i + 2, 1, 1, headers.length).setValues([rows[i]]);
+      updated++;
+    }
   }
-  return { inserted, exercises: exercisesCount };
+  // Append any additional new sets
+  if (rows.length > existingRows.length) {
+    const startRow = sh.getLastRow() + 1;
+    const newRows = rows.slice(existingRows.length);
+    sh.getRange(startRow, 1, newRows.length, headers.length).setValues(newRows);
+    appended = newRows.length;
+  }
+  // (Optional) If there are more existing rows than new, you could clear or mark them, but not deleting for safety
+  return { inserted: updated + appended, exercises: exercisesCount };
 }
 
 function isPerformedSet_(set) {
