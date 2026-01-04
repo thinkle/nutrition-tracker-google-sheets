@@ -9,12 +9,14 @@
 function readLogs(sheet) {
   const data = sheet.getDataRange().getValues();
   const headers = data.shift(); // remove headers
-  return data.filter(row => row[0]) // row[0] = ID, ensure not empty
+  const result = data.filter(row => row[0]) // row[0] = ID, ensure not empty
     .map(row => {
       const obj = {};
-      headers.forEach((h,i) => { obj[h] = row[i]; });
+      headers.forEach((h, i) => { obj[h] = row[i]; });
       return obj;
     });
+  result.reverse();
+  return result;
 }
 
 /**
@@ -23,12 +25,14 @@ function readLogs(sheet) {
 function readSummaries(sheet) {
   const data = sheet.getDataRange().getValues();
   const headers = data.shift();
-  return data.filter(row => row[0]) // row[0] = Date
+  const result = data.filter(row => row[0]) // row[0] = Date
     .map(row => {
       const obj = {};
-      headers.forEach((h,i) => { obj[h] = row[i]; });
+      headers.forEach((h, i) => { obj[h] = row[i]; });
       return obj;
     });
+  result.reverse();
+  return result;
 }
 
 /**
@@ -60,11 +64,11 @@ function updateLog(sheet, id, data) {
 
   for (var i = 0; i < allData.length; i++) {
     if (allData[i][idIndex] === id) {
-      const rowNum = i+2;
+      const rowNum = i + 2;
       headers.forEach((h, idx) => {
         if (h === 'ID') return; // don't overwrite ID
         if (data[h] !== undefined) {
-          sheet.getRange(rowNum, idx+1).setValue(data[h]);
+          sheet.getRange(rowNum, idx + 1).setValue(data[h]);
         }
       });
       return true;
@@ -83,7 +87,7 @@ function deleteLog(sheet, id) {
 
   for (var i = 0; i < allData.length; i++) {
     if (allData[i][idIndex] === id) {
-      const rowNum = i+2;
+      const rowNum = i + 2;
       sheet.deleteRow(rowNum);
       return true;
     }

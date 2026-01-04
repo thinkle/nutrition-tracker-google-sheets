@@ -72,6 +72,7 @@ function getStrengthSets(daysBack, opts) {
     obj['weightUnit'] = 'lb'; // insert unit
     return obj;
   });
+  out.reverse();
   return out;
 }
 
@@ -390,7 +391,7 @@ function handleGetStrengthWorkouts(e) {
       if (end && d > end) return false;
       return true;
     })
-    .sort((a, b) => String(a.Date).localeCompare(String(b.Date)));
+    .sort((a, b) => String(b.Date).localeCompare(String(a.Date)));
 
   return items;
 }
@@ -480,6 +481,7 @@ function handleGetStrengthToday() {
       headers.forEach((h, i) => obj[h] = row[i]);
       return obj;
     });
+  items.reverse();
   return items;
 }
 
@@ -499,7 +501,7 @@ function handleGetStrengthExerciseData(e) {
     if (exId && String(r[idx['ActionLibraryId']]) === String(exId)) return true;
     if (exName && String(r[idx['ExerciseName']]) === String(exName)) return true;
     return false;
-  }).sort((a, b) => Number(a[idx['endTimestamp']]) - Number(b[idx['endTimestamp']]));
+  }).sort((a, b) => Number(b[idx['endTimestamp']]) - Number(a[idx['endTimestamp']]));
   const out = rows.map(r => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = r[i]);

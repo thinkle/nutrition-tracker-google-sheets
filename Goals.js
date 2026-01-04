@@ -61,9 +61,11 @@ function getCurrentGoals(sheet) {
 function getGoalHistory(sheet) {
   const data = sheet.getDataRange().getValues();
   const headers = data.shift();
-  return data.map(row => {
+  const result = data.map(row => {
     const obj = {};
     headers.forEach((h, i) => { obj[h] = row[i]; });
     return obj;
   });
+  result.reverse();
+  return result;
 }

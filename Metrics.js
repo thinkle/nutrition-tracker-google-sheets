@@ -2,13 +2,17 @@
  * METRICS OPERATIONS
  *******************/
 
+function testReadMetrics () {
+  console.log("read metrics: ",readMetrics(SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Metrics")))
+}
+
 /**
  * Read all metrics into objects keyed by column header.
  */
 function readMetrics(sheet, startDate, endDate) {
   const data = sheet.getDataRange().getValues();
   const headers = data.shift();
-  return data.filter(row => {
+  let result = data.filter(row => {
     const date = new Date(row[0]);
     return (!startDate || date >= new Date(startDate)) && (!endDate || date <= new Date(endDate));
   }).map(row => {
@@ -16,6 +20,8 @@ function readMetrics(sheet, startDate, endDate) {
     headers.forEach((h, i) => { obj[h] = row[i]; });
     return obj;
   });
+  result.reverse();
+  return result;
 }
 
 /**
