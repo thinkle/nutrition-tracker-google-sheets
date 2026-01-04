@@ -77,8 +77,8 @@ function getStrengthSets(daysBack, opts) {
 }
 
 function handleGetStrengthSetsFilter(e) {
-  // Parse params
-  const daysBack = Number(e.parameter.daysBack || 7);
+  // Parse params; default to full year so pagination limits to ~50 recent entries
+  const daysBack = Number(e.parameter.daysBack || 365);
   const focusRaw = e.parameter.focus || '';
   const focusCols = focusRaw.split(',').map(s => s.trim()).filter(Boolean);
   const movement = (e.parameter.movement || '');
@@ -99,6 +99,37 @@ function testStrengthSetFilter() {
   console.log('--- 21 days, exercise: squat ---');
   console.log(getStrengthSets(21, { exercise: 'squat' }));
 }
+
+function testHandleGetStrengthWorkouts() {
+  console.log('--- Testing /strength/workouts (bare call, last 50) ---');
+  const items = handleGetStrengthWorkouts({ parameter: {} });
+  console.log(`Total items: ${items.length}`);
+  if (items.length > 0) {
+    console.log('First (should be latest):', items[0].Date);
+    console.log('Last (should be oldest):', items[items.length - 1].Date);
+    console.log('Full results:', items);
+  }
+}
+
+function testHandleGetStrengthSetsFilter() {
+  console.log('--- Testing /strength/sets (bare call, last 50 from 365 days) ---');
+  const items = handleGetStrengthSetsFilter({ parameter: {} });
+  console.log(`Handler returned: ${items.length} items`);
+  if (items.length > 0) {
+    console.log('First (should be latest):', items[0].endTimestamp);
+    console.log('Last (should be oldest):', items[items.length - 1].endTimestamp);
+    console.log('First 5 items:');
+    console.log(items.slice(0, 5));
+  }
+  
+  // Now show what the actual /strength/sets endpoint returns (with pagination)
+  console.log('\n--- Paginated response (as returned by API) ---');
+  const paginated = paginateArray(items, { parameter: { limit: '50', offset: '0' } });
+  console.log(`Paginated response:`, paginated);
+  console.log(`Items in response: ${paginated.items.length}`);
+  console.log(`Total available: ${paginated.total}`);
+}
+
 /**
  * Strength workout ingestion: POST /logStrengthWorkout
  * Accepts either the wrapper {code,message,data} or just the data object.
@@ -385,13 +416,12 @@ function handleGetStrengthWorkouts(e) {
       EndTimestamp: row[idx['EndTimestamp']],
     }))
     .filter((w) => {
-      if (!start && !end) return true;
       const d = String(w.Date);
       if (start && d < start) return false;
       if (end && d > end) return false;
       return true;
     })
-    .sort((a, b) => String(b.Date).localeCompare(String(a.Date)));
+    .sort((a, b) => Number(b.EndTimestamp) - Number(a.EndTimestamp));
 
   return items;
 }
