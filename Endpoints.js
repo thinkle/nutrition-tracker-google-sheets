@@ -211,14 +211,37 @@ function handleLogRequest(e, ss, method) {
   return sendJsonResponse(processLogEntry(logSheet, data, method));
 }
 
+/**
+ * Sanitize nutrient values: set negative values to 0 except for carbs and kcal
+ */
+function sanitizeNutrientValues(entry) {
+  const sanitized = { ...entry };
+
+  // Nutrients that should be set to 0 if negative
+  const nonNegativeNutrients = ['protein', 'fat', 'added_sugar', 'fiber', 'alcohol'];
+
+  nonNegativeNutrients.forEach(nutrient => {
+    if (typeof sanitized[nutrient] === 'number' && sanitized[nutrient] < 0) {
+      sanitized[nutrient] = 0;
+    }
+  });
+
+  // carbs and kcal can be negative, so leave them as-is
+
+  return sanitized;
+}
+
 function processLogEntry(logSheet, entry, method) {
+  // Sanitize nutrient values: set negative values to 0 except for carbs and kcal
+  const sanitizedEntry = sanitizeNutrientValues(entry);
+
   if (method === 'POST') {
-    const id = createLog(logSheet, entry);
+    const id = createLog(logSheet, sanitizedEntry);
     return { status: 'created', id: id };
   } else if (method === 'PUT') {
-    if (!entry.ID) return { status: 'error', message: 'ID required for update' };
-    const success = updateLog(logSheet, entry.ID, entry);
-    return success ? { status: 'updated', id: entry.ID } : { status: 'error', message: 'Not found' };
+    if (!sanitizedEntry.ID) return { status: 'error', message: 'ID required for update' };
+    const success = updateLog(logSheet, sanitizedEntry.ID, sanitizedEntry);
+    return success ? { status: 'updated', id: sanitizedEntry.ID } : { status: 'error', message: 'Not found' };
   } else if (method === 'DELETE') {
     if (!entry.ID) return { status: 'error', message: 'ID required for delete' };
     const success = deleteLog(logSheet, entry.ID);
@@ -306,7 +329,8 @@ function handleGetGoals(ss, e) {
 function handlePostGoals(e, ss) {
   const goalsSheet = ss.getSheetByName('Goals');
   const data = e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
-  const success = logGoal(goalsSheet, data);
+  const sanitizedData = sanitizeNutrientValues(data);
+  const success = logGoal(goalsSheet, sanitizedData);
   return sendJsonResponse({ status: success ? 'created' : 'error' });
 }
 
