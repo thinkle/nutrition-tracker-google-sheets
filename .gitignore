@@ -1,0 +1,11 @@
+# Secrets - never commit these
+secrets.txt
+.env
+.env.*
+.dev.vars
+
+# Cloudflare build artifacts
+.wrangler/
+
+# Node dependencies
+node_modules/

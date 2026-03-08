@@ -1,0 +1,23 @@
+name = "personal-mcp"
+main = "src/index.js"
+compatibility_date = "2025-03-07"
+compatibility_flags = ["nodejs_compat"]
+
+# Service Bindings — call the proxy workers directly without going through HTTP routing.
+# This avoids the Cloudflare 1042 error that occurs when Workers fetch other workers.dev URLs.
+[[services]]
+binding = "NUTRITION"
+service = "nutrition"
+
+[[services]]
+binding = "XERT"
+service = "xert"
+
+[vars]
+RECIPE_API_BASE = "https://dev--gourmet-svelte.netlify.app/.netlify/functions/api"
+
+# Secrets — set these via CLI, do NOT put values here:
+#   wrangler secret put MCP_API_KEY      (Bearer token Claude sends to connect)
+#   wrangler secret put XERT_API_KEY     (X-API-KEY for xert.tmhinkle.workers.dev)
+#   wrangler secret put RECIPE_API_KEY   (X-API-Key for the recipe tracker)
+#   wrangler secret put USDA_API_KEY     (API key from https://fdc.nal.usda.gov/api-key)
