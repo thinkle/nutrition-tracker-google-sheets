@@ -3,6 +3,7 @@ secrets.txt
 .env
 .env.*
 .dev.vars
+.mcp-key
 
 # Cloudflare build artifacts
 .wrangler/

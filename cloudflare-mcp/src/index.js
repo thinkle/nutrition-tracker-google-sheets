@@ -383,7 +383,7 @@ function buildServer(env) {
   server.registerTool(
     "list_exercises",
     {
-      description: "List the Speediance exercise library, grouped by category and muscle group. Returns groupId and actionLibraryId for each exercise — you need both to build a workout. Call get_exercise_detail for full variant info on a specific exercise.",
+      description: "List the Speediance exercise library, grouped by category and muscle group. Each exercise entry includes its name and groupId. IMPORTANT: groupId alone is not enough to build a workout — you also need an actionLibraryId, which is a separate value only available via get_exercise_detail(groupId). Alternatively, use create_speediance_workout (by name) to skip the ID lookup entirely.",
     },
     async () => ok(await spedianceRequest("/exercises"))
   );
@@ -391,8 +391,8 @@ function buildServer(env) {
   server.registerTool(
     "get_exercise_detail",
     {
-      description: "Get full detail for a Speediance exercise group, including all action variants and their actionLibraryIds. Use this when list_exercises doesn't show enough info to pick the right variant.",
-      inputSchema: { groupId: z.number().describe("The exercise groupId from list_exercises") },
+      description: "Get full detail for one exercise group, including the actionLibraryList — the source of valid actionLibraryId values required by save_speediance_workout. Pick the first entry where isDisplay=1, or the first entry if none are marked. The groupId parameter is the id field from list_exercises.",
+      inputSchema: { groupId: z.number().describe("The exercise groupId (the 'id' field from list_exercises)") },
     },
     async ({ groupId }) => ok(await spedianceRequest(`/exercise/${groupId}`))
   );
@@ -417,9 +417,15 @@ function buildServer(env) {
   server.registerTool(
     "save_speediance_workout",
     {
-      description: `Create a new Speediance workout template from a canonical exercise list. Each exercise needs a groupId and actionLibraryId (from list_exercises / get_exercise_detail) and a mode:
-- "hypertrophy": 3 sets × 12 reps @ 13RM, 60s rest (good default for muscle building)
-- "strength":    5 sets × 5 reps  @ 6RM,  90s rest (good default for strength)
+      description: `Create a new Speediance workout template. groupId and actionLibraryId are NOT the same value and cannot be guessed or duplicated from each other. Required workflow:
+1. Call list_exercises → get groupId for the exercise
+2. Call get_exercise_detail(groupId) → pick an actionLibraryId from actionLibraryList (prefer isDisplay=1, or first entry)
+Shortcut: existing templates from list_speediance_workouts contain confirmed working {groupId, actionLibraryId} pairs you can reuse.
+Alternatively, use create_speediance_workout to build a workout by exercise name and skip the ID lookup.
+
+Modes:
+- "hypertrophy": 3 sets × 12 reps @ 13RM, 60s rest (default for muscle building)
+- "strength":    5 sets × 5 reps  @ 6RM,  90s rest (default for strength)
 - "custom":      you specify sets, reps, weight (lbs), and rest
 For hypertrophy/strength you can override sets and rest; reps and RM are fixed by the mode.`,
       inputSchema: {
@@ -437,6 +443,36 @@ For hypertrophy/strength you can override sets and rest; reps and RM are fixed b
     },
     async ({ name, exercises }) =>
       ok(await spedianceRequest("/workout", {
+        method: "POST",
+        body: JSON.stringify({ name, exercises }),
+      }))
+  );
+
+  server.registerTool(
+    "create_speediance_workout",
+    {
+      description: `Create a Speediance workout by exercise name — no ID lookup needed. The proxy resolves each exercise name to the correct groupId and actionLibraryId automatically.
+Use this instead of save_speediance_workout to avoid the two-step list_exercises → get_exercise_detail dance.
+Exercise names should match what's in the Speediance library (e.g. "Barbell Bench Press"). Partial/case-insensitive matches are supported.
+
+Modes:
+- "hypertrophy": 3 sets × 12 reps @ 13RM, 60s rest
+- "strength":    5 sets × 5 reps  @ 6RM,  90s rest
+- "custom":      you specify sets, reps, weight (lbs), and rest`,
+      inputSchema: {
+        name: z.string().describe("Workout name"),
+        exercises: z.array(z.object({
+          name:   z.string().describe("Exercise name as it appears in the Speediance library"),
+          mode:   z.enum(["hypertrophy", "strength", "custom"]).describe("Training mode"),
+          sets:   z.number().optional().describe("Override number of sets"),
+          rest:   z.number().optional().describe("Override rest time in seconds"),
+          reps:   z.number().optional().describe("(custom only) Reps per set"),
+          weight: z.number().optional().describe("(custom only) Weight in lbs"),
+        })).describe("List of exercises in order"),
+      },
+    },
+    async ({ name, exercises }) =>
+      ok(await spedianceRequest("/workout/byname", {
         method: "POST",
         body: JSON.stringify({ name, exercises }),
       }))

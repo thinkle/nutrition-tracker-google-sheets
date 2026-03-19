@@ -1,0 +1,20 @@
+name = "speediance"
+main = "CloudflareSpedianceProxy.js"
+compatibility_date = "2025-03-07"
+workers_dev = true
+
+# Bindings
+# Create or reuse an existing KV namespace:
+#   npx wrangler kv namespace create SECRET_STORE
+# Then paste the returned id below.
+kv_namespaces = [
+  { binding = "SECRET_STORE", id = "6563467135684308aa4fc1db6d6a91f6" }
+]
+
+# Secrets — set via wrangler secret put, do NOT store values here:
+#   wrangler secret put API_KEY              (X-API-KEY expected from the MCP server)
+#   wrangler secret put --config wrangler-speediance.toml API_KEY
+#
+# KV secrets — set via wrangler kv key put:
+#   wrangler kv key put --binding SECRET_STORE SPEEDIANCE_EMAIL "you@example.com"
+#   wrangler kv key put --binding SECRET_STORE SPEEDIANCE_PASSWORD "yourpassword"

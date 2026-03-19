@@ -242,6 +242,70 @@ export default {
         return jsonResp(detail);
       }
 
+      // POST /workout/byname
+      // Like POST /workout but exercises are identified by name instead of raw IDs.
+      // Resolves each name → groupId → actionLibraryId automatically.
+      // Body:
+      //   name      string  — workout name
+      //   exercises array   — { name, mode, sets?, rest?, reps?, weight? }
+      if (path === "/workout/byname" && request.method === "POST") {
+        const body = await request.json();
+        const { name, exercises = [] } = body;
+        if (!name) return new Response("name is required", { status: 400 });
+        if (!exercises.length) return new Response("exercises cannot be empty", { status: 400 });
+
+        // Build a flat lowercase-title → groupId map from the exercise library.
+        // Library structure: tabs → groups (trainingPartId2 + actionLibraryGroupList)
+        //                    → exercises (id=groupId, title=exercise name)
+        const tabs = await spReq(`/api/app/actionLibraryTab/list?deviceType=${LIBRARY_DEVICE_TYPE}`);
+        const nameToGroupId = {};
+        for (const tab of tabs ?? []) {
+          const groups = await spReq(
+            `/api/app/actionLibraryGroup/trainingPartGroup?tabId=${tab.id}&deviceTypeList=${LIBRARY_DEVICE_TYPE}`
+          );
+          for (const group of groups ?? []) {
+            for (const ex of group.actionLibraryGroupList ?? []) {
+              if (ex.id && ex.title) {
+                nameToGroupId[ex.title.toLowerCase()] = ex.id;
+              }
+            }
+          }
+        }
+
+        // Resolve each exercise name → (groupId, actionLibraryId)
+        const resolved = await Promise.all(exercises.map(async (ex) => {
+          const needle = ex.name.toLowerCase();
+          let groupId = nameToGroupId[needle];
+          if (!groupId) {
+            // Try substring match in both directions
+            const key = Object.keys(nameToGroupId).find(
+              k => k.includes(needle) || needle.includes(k)
+            );
+            if (!key) throw new Error(`Exercise not found in library: "${ex.name}"`);
+            groupId = nameToGroupId[key];
+          }
+          const detail = await spReq(`/api/app/actionLibraryGroup/${groupId}?isDisplay=1`);
+          const variants = detail?.actionLibraryList ?? [];
+          if (!variants.length) throw new Error(`No variants found for exercise: "${ex.name}" (groupId ${groupId})`);
+          const variant = variants.find(v => v.isDisplay === 1) ?? variants[0];
+          return { ...ex, groupId, actionLibraryId: variant.id };
+        }));
+
+        const actionLibraryList = resolved.map(compileExercise);
+        const payload = {
+          name,
+          actionLibraryList,
+          totalCapacity: 0,
+          deviceType:    WORKOUT_DEVICE_TYPE,
+          bgColor:       0,
+        };
+        const result = await spReq("/api/app/v2/customTrainingTemplate", {
+          method: "POST",
+          body:   JSON.stringify(payload),
+        });
+        return jsonResp(result);
+      }
+
       // POST /workout
       // Create a workout template from a canonical model.
       //
