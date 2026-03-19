@@ -77,7 +77,7 @@ function buildServer(env) {
   server.registerTool(
     "log_food",
     {
-      description: "Log a meal entry to track nutrition. ALWAYS include the Date field — never omit it, even when logging a meal 'today'. Use today's actual date in YYYY-MM-DD format.",
+      description: "Log a meal entry to track nutrition. ALWAYS include the Date field — never omit it, even when logging a meal 'today'. Use today's actual date in YYYY-MM-DD format. After ALL items are logged (not after each one), call get_today_summary once to show the user their updated daily totals. If you do not already have the user's nutrition goals in context, call get_goals first so the summary can be compared against targets.",
       inputSchema: {
         Food: z.string().describe("Name of the food item"),
         Description: z.string().optional().describe("Additional description"),
@@ -91,15 +91,17 @@ function buildServer(env) {
         Date: z.string().describe("Date in YYYY-MM-DD format. Required — always provide this, even for today's meals."),
       },
     },
-    async ({ Food, Description, Meal, kcal, protein, fat, carbs, Date }) => {
+    async ({ Food, Description, Meal, kcal, protein, fat, carbs, fiber, added_sugar, Date }) => {
       const body = { Food, Description, Meal, kcal, protein, fat, carbs, Date };
+      if (fiber !== undefined) body.fiber = fiber;
+      if (added_sugar !== undefined) body.added_sugar = added_sugar;
       return ok(await nutritionRequest("/log", { method: "POST", body: JSON.stringify(body) }));
     }
   );
 
   server.registerTool(
     "get_today_summary",
-    { description: "Get today's nutrition totals including calories, macros, and comparison to goals" },
+    { description: "Get today's nutrition totals including calories, macros, and comparison to goals. If you do not already have the user's nutrition goals in context, call get_goals alongside this so you can show progress against targets." },
     async () => ok(await nutritionRequest("/today"))
   );
 
@@ -124,7 +126,7 @@ function buildServer(env) {
   server.registerTool(
     "log_weight",
     {
-      description: "Log a weight measurement",
+      description: "Log a weight measurement. After logging, call get_weight_history to show the user their recent trend.",
       inputSchema: {
         Date: z.string().describe("Date of measurement in YYYY-MM-DD format"),
         Weight: z.number().describe("Weight value"),
@@ -135,9 +137,58 @@ function buildServer(env) {
   );
 
   server.registerTool(
+    "get_weight_history",
+    {
+      description: "Get weight measurements over time, optionally filtered by date range.",
+      inputSchema: {
+        start_date: z.string().optional().describe("Start date in YYYY-MM-DD format (default: ~30 days ago)"),
+        end_date: z.string().optional().describe("End date in YYYY-MM-DD format (default: today)"),
+        limit: z.number().optional().describe("Max items to return (default 50)"),
+      },
+    },
+    async ({ start_date, end_date, limit }) => {
+      const p = new URLSearchParams();
+      if (start_date) p.set("start_date", start_date);
+      if (end_date) p.set("end_date", end_date);
+      if (limit !== undefined) p.set("limit", String(limit));
+      const qs = p.toString();
+      return ok(await nutritionRequest(`/metrics${qs ? "?" + qs : ""}`));
+    }
+  );
+
+  server.registerTool(
     "get_goals",
-    { description: "Get current nutrition goals" },
+    { description: "Get current nutrition goals. Call this at the start of any nutrition session so you can compare intake against targets." },
     async () => ok(await nutritionRequest("/goals"))
+  );
+
+  server.registerTool(
+    "get_goal_history",
+    { description: "Get the history of past nutrition goal changes over time." },
+    async () => ok(await nutritionRequest("/goals/history"))
+  );
+
+  server.registerTool(
+    "update_goals",
+    {
+      description: "Set new nutrition goals. Only include the fields you want to change.",
+      inputSchema: {
+        kcal: z.number().optional().describe("Daily calorie target"),
+        protein: z.number().optional().describe("Daily protein target in grams"),
+        fat: z.number().optional().describe("Daily fat target in grams"),
+        carbs: z.number().optional().describe("Daily carbohydrate target in grams"),
+        fiber: z.number().optional().describe("Daily fiber target in grams"),
+        added_sugar: z.number().optional().describe("Daily added sugar target in grams"),
+        alcohol: z.number().optional().describe("Daily alcohol target in grams"),
+      },
+    },
+    async (fields) => {
+      const body = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (v !== undefined) body[k] = v;
+      }
+      return ok(await nutritionRequest("/goals", { method: "POST", body: JSON.stringify(body) }));
+    }
   );
 
   server.registerTool(
@@ -523,7 +574,7 @@ function buildServer(env) {
   server.registerTool(
     "usda_food_search",
     {
-      description: "Search the USDA FoodData Central database for nutritional info on any food. Returns calories, protein, fat, and carbs per 100g. Use this to spot-check calorie density or look up macros for a food before logging it.",
+      description: "Look up nutritional data for a food in the USDA FoodData Central database. Returns macros per 100g. ONLY use this when: (1) the user questions or wants to verify nutrition numbers, (2) you are genuinely uncertain about a food's macros, or (3) the food is unusual/obscure. Do NOT call this before every log entry — use your own knowledge for common foods (pasta, chicken, rice, eggs, bread, etc.) and only hit this endpoint to fact-check or resolve uncertainty. Note: covers generic/whole foods and some branded packaged items; restaurant dishes and custom meals won't be found.",
       inputSchema: {
         query: z.string().describe("Food name or description to search for"),
         limit: z.number().optional().default(5).describe("Number of results to return (default 5, max 25)"),
@@ -746,7 +797,7 @@ export default {
         return json({
           access_token: env.MCP_API_KEY,
           token_type: "bearer",
-          expires_in: 86400,
+          expires_in: 31536000, // 1 year — token is the static API key, so no real expiry
         });
       }
 
@@ -763,7 +814,7 @@ export default {
         if (clientId !== env.MCP_CLIENT_ID || clientSecret !== env.MCP_API_KEY) {
           return json({ error: "invalid_client" }, 401);
         }
-        return json({ access_token: env.MCP_API_KEY, token_type: "bearer", expires_in: 3600 });
+        return json({ access_token: env.MCP_API_KEY, token_type: "bearer", expires_in: 31536000 });
       }
 
       return json({ error: "unsupported_grant_type" }, 400);
