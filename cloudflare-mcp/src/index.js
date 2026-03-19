@@ -14,6 +14,8 @@ function buildServer(env) {
   const nutritionBase = "https://nutrition.tmhinkle.workers.dev";
   const xertBase = "https://xert.tmhinkle.workers.dev";
   const xertApiKey = env.XERT_API_KEY;
+  const spedianceBase = "https://speediance.tmhinkle.workers.dev";
+  const spedianceApiKey = env.SPEEDIANCE_API_KEY;
   // Recipe API is on Netlify (external), so regular fetch() works fine.
   const recipeBase = env.RECIPE_API_BASE;
   const recipeApiKey = env.RECIPE_API_KEY;
@@ -30,6 +32,18 @@ function buildServer(env) {
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`Nutrition API ${response.status}: ${text}`);
+    }
+    return response.json();
+  }
+
+  async function spedianceRequest(endpoint, options = {}) {
+    const response = await env.SPEEDIANCE.fetch(`${spedianceBase}${endpoint}`, {
+      headers: { "X-API-KEY": spedianceApiKey, "Content-Type": "application/json", ...options.headers },
+      ...options,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Speediance proxy ${response.status}: ${text}`);
     }
     return response.json();
   }
@@ -356,6 +370,128 @@ function buildServer(env) {
         method: "POST",
         body: JSON.stringify(JSON.parse(workoutData)),
       }))
+  );
+
+  // -------------------------------------------------------------------------
+  // Speediance tools
+  // -------------------------------------------------------------------------
+  // Device type note: exercise listings always use Gym Monster (deviceType=1)
+  // because this user's pulley setup lets them use GM movements. All workout
+  // templates and scheduling target Gym Pal (deviceType=2). This is baked into
+  // the proxy — the MCP tools don't need to specify device type.
+
+  server.registerTool(
+    "list_exercises",
+    {
+      description: "List the Speediance exercise library, grouped by category and muscle group. Returns groupId and actionLibraryId for each exercise — you need both to build a workout. Call get_exercise_detail for full variant info on a specific exercise.",
+    },
+    async () => ok(await spedianceRequest("/exercises"))
+  );
+
+  server.registerTool(
+    "get_exercise_detail",
+    {
+      description: "Get full detail for a Speediance exercise group, including all action variants and their actionLibraryIds. Use this when list_exercises doesn't show enough info to pick the right variant.",
+      inputSchema: { groupId: z.number().describe("The exercise groupId from list_exercises") },
+    },
+    async ({ groupId }) => ok(await spedianceRequest(`/exercise/${groupId}`))
+  );
+
+  server.registerTool(
+    "list_speediance_workouts",
+    {
+      description: "List the user's saved custom Speediance workout templates.",
+    },
+    async () => ok(await spedianceRequest("/workouts"))
+  );
+
+  server.registerTool(
+    "get_speediance_workout",
+    {
+      description: "Get the full detail of a saved Speediance workout template by its code.",
+      inputSchema: { code: z.string().describe("The template code from list_speediance_workouts") },
+    },
+    async ({ code }) => ok(await spedianceRequest(`/workout/${code}`))
+  );
+
+  server.registerTool(
+    "save_speediance_workout",
+    {
+      description: `Create a new Speediance workout template from a canonical exercise list. Each exercise needs a groupId and actionLibraryId (from list_exercises / get_exercise_detail) and a mode:
+- "hypertrophy": 3 sets × 12 reps @ 13RM, 60s rest (good default for muscle building)
+- "strength":    5 sets × 5 reps  @ 6RM,  90s rest (good default for strength)
+- "custom":      you specify sets, reps, weight (lbs), and rest
+For hypertrophy/strength you can override sets and rest; reps and RM are fixed by the mode.`,
+      inputSchema: {
+        name: z.string().describe("Workout name"),
+        exercises: z.array(z.object({
+          groupId:         z.number().describe("Exercise group ID from the library"),
+          actionLibraryId: z.number().describe("Specific action/variant ID from exercise detail"),
+          mode:            z.enum(["hypertrophy", "strength", "custom"]).describe("Training mode"),
+          sets:            z.number().optional().describe("Override number of sets (default: 3 for hypertrophy, 5 for strength)"),
+          rest:            z.number().optional().describe("Override rest time in seconds (default: 60 for hypertrophy, 90 for strength)"),
+          reps:            z.number().optional().describe("(custom only) Reps per set"),
+          weight:          z.number().optional().describe("(custom only) Weight in lbs"),
+        })).describe("List of exercises in order"),
+      },
+    },
+    async ({ name, exercises }) =>
+      ok(await spedianceRequest("/workout", {
+        method: "POST",
+        body: JSON.stringify({ name, exercises }),
+      }))
+  );
+
+  server.registerTool(
+    "delete_speediance_workout",
+    {
+      description: "Delete a saved Speediance workout template by its numeric ID. Use list_speediance_workouts to find the ID first.",
+      inputSchema: { id: z.number().describe("The template ID to delete") },
+    },
+    async ({ id }) => ok(await spedianceRequest(`/workout/${id}`, { method: "DELETE" }))
+  );
+
+  server.registerTool(
+    "get_speediance_calendar",
+    {
+      description: "Get the Speediance training calendar for a given month, showing scheduled and completed workouts.",
+      inputSchema: { month: z.string().describe("Month in YYYY-MM format (defaults to current month if omitted)").optional() },
+    },
+    async ({ month }) => ok(await spedianceRequest(month ? `/calendar?month=${month}` : "/calendar"))
+  );
+
+  server.registerTool(
+    "schedule_speediance_workout",
+    {
+      description: "Schedule a Speediance workout template on a specific date.",
+      inputSchema: {
+        templateCode: z.string().describe("The template code from list_speediance_workouts"),
+        date:         z.string().describe("Date in YYYY-MM-DD format"),
+      },
+    },
+    async ({ templateCode, date }) =>
+      ok(await spedianceRequest("/schedule", {
+        method: "POST",
+        body: JSON.stringify({ templateCode, date }),
+      }))
+  );
+
+  server.registerTool(
+    "get_speediance_history",
+    {
+      description: "Get Speediance training session records for a date range.",
+      inputSchema: {
+        startDate: z.string().describe("Start date in YYYY-MM-DD format"),
+        endDate:   z.string().describe("End date in YYYY-MM-DD format"),
+        stats:     z.boolean().optional().describe("If true, return aggregate stats instead of individual records"),
+      },
+    },
+    async ({ startDate, endDate, stats }) => {
+      const path = stats
+        ? `/history/stats?startDate=${startDate}&endDate=${endDate}`
+        : `/history?startDate=${startDate}&endDate=${endDate}`;
+      return ok(await spedianceRequest(path));
+    }
   );
 
   // -------------------------------------------------------------------------
