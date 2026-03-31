@@ -25,17 +25,21 @@ const WORKOUT_DEVICE_TYPE = 2; // Gym Pal    — used for all templates / schedu
 // Static headers that mimic the Speediance mobile client.
 const STATIC_HEADERS = {
   "Content-Type": "application/json",
-  "Versioncode": "40304",
+  "Versioncode": "31408",
   "Mobiledevices": JSON.stringify({
     brand: "google",
-    device: "emulator64_x86_64_arm64",
-    deviceType: "sdk_gphone64_x86_64",
+    device: "emulator64_arm64",
+    deviceType: "Android SDK built for arm64",
     os: "",
-    os_version: "31",
+    os_version: "29",
     manufacturer: "Google",
   }),
-  "User-Agent": "Dart/3.9 (dart:io)",
+  "User-Agent": "Dart/3.7 (dart:io)",
   "Host": "api2.speediance.com",
+  "Accept-Language": "en",
+  "Utc_offset": "-0500",
+  "Timezone": "America/New_York",
+  "App_type": "SOFTWARE",
 };
 
 function authHeaders(token, appUserId) {
@@ -415,7 +419,7 @@ export default {
       // Detail for a single completed training session.
       if (path.startsWith("/training/") && request.method === "GET") {
         const id   = path.split("/")[2];
-        const data = await spReq(`/api/app/trainingInfo/cttTrainingInfo/${id}`);
+        const data = await spReq(`/api/app/trainingInfo/cttTrainingInfoDetail/${id}`);
         return jsonResp(data);
       }
 
