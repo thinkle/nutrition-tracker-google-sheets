@@ -530,6 +530,15 @@ Modes:
     }
   );
 
+  server.registerTool(
+    "get_speediance_activity",
+    {
+      description: "Get full exercise-by-exercise detail for a single Speediance training session, including sets, reps, and weight for each exercise. Use the trainingId field from get_speediance_history results.",
+      inputSchema: { trainingId: z.number().describe("The trainingId from a get_speediance_history result") },
+    },
+    async ({ trainingId }) => ok(await spedianceRequest(`/training/${trainingId}`))
+  );
+
   // -------------------------------------------------------------------------
   // Xert tools
   // -------------------------------------------------------------------------
