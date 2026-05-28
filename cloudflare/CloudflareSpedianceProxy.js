@@ -64,6 +64,7 @@ function authHeaders(token, appUserId) {
 //   weight           number? — (custom only) weight in lbs
 function compileExercise(ex) {
   const { groupId, actionLibraryId } = ex;
+  const isUnilateral = (ex.isLeftRight ?? 0) === 1;
 
   let sets, reps, restSec, isRm, rm;
 
@@ -87,38 +88,44 @@ function compileExercise(ex) {
     isRm    = false;
   }
 
-  const repeat = (v) => Array(sets).fill(String(v)).join(",");
+  // Unilateral exercises (isLeftRight=1) require 2× entries in every CSV field —
+  // one entry per side per set — and leftRight alternates "1,2,1,2..." (left=1, right=2).
+  const n = isUnilateral ? sets * 2 : sets;
+  const repeat = (v) => Array(n).fill(String(v)).join(",");
+  const leftRightVal = isUnilateral
+    ? Array.from({ length: n }, (_, i) => i % 2 === 0 ? "1" : "2").join(",")
+    : Array(n).fill("0").join(",");
 
   const payload = {
     groupId,
     actionLibraryId,
     templatePresetId: isRm ? 1 : -1,
-    setsAndReps:              repeat(reps),
-    breakTime:                repeat(restSec),
-    breakTime2:               repeat(restSec),
-    sportMode:                repeat(1),
-    leftRight:                repeat(0),
-    selectCompletionMethod:   repeat(1),
-    completionMethod:         repeat(1),
-    countType:                repeat(1),
-    level:                    repeat(0),
-    capacity:                 0,
+    setsAndReps:            repeat(reps),
+    breakTime2:             repeat(restSec),
+    sportMode:              repeat(1),
+    leftRight:              leftRightVal,
+    selectCompletionMethod: repeat(1),
+    capacity:               0,
   };
 
   if (isRm) {
     payload.counterweight2 = repeat(rm);
-    payload.counterweight  = repeat(rm);
-    payload.weights        = repeat(0);
+    payload.weights        = "";
   } else {
-    // Custom: weight already in lbs (Speediance internal unit)
     const w = Math.round(ex.weight ?? 0);
     payload.weights        = repeat(w);
-    payload.counterweight  = "";
     payload.counterweight2 = "";
   }
 
   return payload;
 }
+
+// ---------------------------------------------------------------------------
+// Module-level library cache — persists across requests in the same isolate,
+// avoiding the 10-request tab+group fetch on every /workout/byname call.
+// Invalidated naturally when Cloudflare recycles the isolate (minutes–hours).
+// ---------------------------------------------------------------------------
+let cachedLibraryPromise = null;
 
 // ---------------------------------------------------------------------------
 // Worker entry
@@ -247,53 +254,96 @@ export default {
       }
 
       // POST /workout/byname
-      // Like POST /workout but exercises are identified by name instead of raw IDs.
-      // Resolves each name → groupId → actionLibraryId automatically.
+      // Like POST /workout but exercises are identified by name keywords or groupId.
       // Body:
       //   name      string  — workout name
-      //   exercises array   — { name, mode, sets?, rest?, reps?, weight? }
+      //   exercises array   — { name? | groupId?, mode, sets?, rest?, reps?, weight? }
+      //     name     string  — space-separated keywords; ALL must appear in the library exercise name
+      //     groupId  number  — use directly, bypassing name matching entirely
       if (path === "/workout/byname" && request.method === "POST") {
         const body = await request.json();
         const { name, exercises = [] } = body;
         if (!name) return new Response("name is required", { status: 400 });
         if (!exercises.length) return new Response("exercises cannot be empty", { status: 400 });
 
-        // Build a flat lowercase-title → groupId map from the exercise library.
-        // Library structure: tabs → groups (trainingPartId2 + actionLibraryGroupList)
-        //                    → exercises (id=groupId, title=exercise name)
-        const tabs = await spReq(`/api/app/actionLibraryTab/list?deviceType=${LIBRARY_DEVICE_TYPE}`);
-        const nameToGroupId = {};
-        for (const tab of tabs ?? []) {
-          const groups = await spReq(
-            `/api/app/actionLibraryGroup/trainingPartGroup?tabId=${tab.id}&deviceTypeList=${LIBRARY_DEVICE_TYPE}`
-          );
-          for (const group of groups ?? []) {
-            for (const ex of group.actionLibraryGroupList ?? []) {
-              if (ex.id && ex.title) {
-                nameToGroupId[ex.title.toLowerCase()] = ex.id;
+        // Fetch the exercise library once per isolate lifetime; concurrent callers
+        // within a request also share the same promise (no duplicate fetches).
+        function getLibrary() {
+          if (!cachedLibraryPromise) {
+            cachedLibraryPromise = (async () => {
+              const lib = {};
+              const tabs = await spReq(`/api/app/actionLibraryTab/list?deviceType=${LIBRARY_DEVICE_TYPE}`);
+              for (const tab of tabs ?? []) {
+                const groups = await spReq(
+                  `/api/app/actionLibraryGroup/trainingPartGroup?tabId=${tab.id}&deviceTypeList=${LIBRARY_DEVICE_TYPE}`
+                );
+                for (const group of groups ?? []) {
+                  for (const ex of group.actionLibraryGroupList ?? []) {
+                    if (ex.id && ex.title) {
+                      lib[ex.title.toLowerCase()] = ex.id;
+                    }
+                  }
+                }
               }
-            }
+              return lib;
+            })();
           }
+          return cachedLibraryPromise;
         }
 
-        // Resolve each exercise name → (groupId, actionLibraryId)
-        const resolved = await Promise.all(exercises.map(async (ex) => {
-          const needle = ex.name.toLowerCase();
-          let groupId = nameToGroupId[needle];
-          if (!groupId) {
-            // Try substring match in both directions
-            const key = Object.keys(nameToGroupId).find(
-              k => k.includes(needle) || needle.includes(k)
+        // Word-based matching: all words in the query must appear in the library name.
+        // Returns groupId on exactly one match, throws a descriptive error otherwise.
+        async function resolveByName(queryName) {
+          const lib = await getLibrary(); // shared promise — only one fetch regardless of concurrency
+          const words = queryName.toLowerCase().split(/\s+/).filter(Boolean);
+
+          const scored = Object.entries(lib).map(([key, id]) => {
+            const matched = words.filter(w => key.includes(w));
+            return { key, id, matched, score: matched.length };
+          }).filter(e => e.score > 0).sort((a, b) => b.score - a.score);
+
+          const full = scored.filter(e => e.score === words.length);
+
+          if (full.length === 1) return full[0].id;
+
+          if (full.length > 1) {
+            const list = full.map(e => `  {"groupId": ${e.id}}  —  ${e.key}`).join("\n");
+            throw new Error(
+              `Multiple exercises match [${words.map(w => `"${w}"`).join(", ")}]:\n${list}\n` +
+              `Add more keywords to narrow it down, or replace {"name":"..."} with {"groupId": <id>} to specify exactly.`
             );
-            if (!key) throw new Error(`Exercise not found in library: "${ex.name}"`);
-            groupId = nameToGroupId[key];
           }
+
+          // No full match — show best partial matches to help the caller refine.
+          const partials = scored.slice(0, 8)
+            .map(e => `  {"groupId": ${e.id}}  —  ${e.key}  (matches: ${e.matched.join(", ")})`).join("\n");
+          throw new Error(
+            `No exercise found matching all of [${words.map(w => `"${w}"`).join(", ")}].\n` +
+            `Closest partial matches:\n${(partials || "  (none)")}` +
+            `\nTry fewer or different keywords, or replace {"name":"..."} with {"groupId": <id>} to specify exactly.`
+          );
+        }
+
+        // Resolve each exercise → (groupId, actionLibraryId).
+        // Use allSettled so all exercises are attempted and ALL errors are returned at once.
+        const settlements = await Promise.allSettled(exercises.map(async (ex) => {
+          if (!ex.name && ex.groupId == null) {
+            throw new Error(`Each exercise must have either "name" or "groupId".`);
+          }
+          const groupId = ex.groupId != null ? ex.groupId : await resolveByName(ex.name);
           const detail = await spReq(`/api/app/actionLibraryGroup/${groupId}?isDisplay=1`);
           const variants = detail?.actionLibraryList ?? [];
-          if (!variants.length) throw new Error(`No variants found for exercise: "${ex.name}" (groupId ${groupId})`);
+          if (!variants.length) throw new Error(`No variants found for groupId ${groupId}`);
           const variant = variants.find(v => v.isDisplay === 1) ?? variants[0];
-          return { ...ex, groupId, actionLibraryId: variant.id };
+          return { ...ex, groupId, actionLibraryId: variant.id, isLeftRight: detail.isLeftRight ?? 0 };
         }));
+
+        const errors = settlements
+          .map((s, i) => s.status === "rejected" ? `Exercise ${i + 1} ("${exercises[i].name ?? exercises[i].groupId}"): ${s.reason.message}` : null)
+          .filter(Boolean);
+        if (errors.length) throw new Error(errors.join("\n\n"));
+
+        const resolved = settlements.map(s => s.value);
 
         const actionLibraryList = resolved.map(compileExercise);
         const payload = {
@@ -333,7 +383,14 @@ export default {
 
         if (!name) return new Response("name is required", { status: 400 });
 
-        const actionLibraryList = exercises.map(compileExercise);
+        // Auto-fetch isLeftRight for any exercise that doesn't already have it.
+        const resolved = await Promise.all(exercises.map(async (ex) => {
+          if (ex.isLeftRight != null) return ex;
+          const detail = await spReq(`/api/app/actionLibraryGroup/${ex.groupId}?isDisplay=1`);
+          return { ...ex, isLeftRight: detail.isLeftRight ?? 0 };
+        }));
+
+        const actionLibraryList = resolved.map(compileExercise);
         const payload = {
           name,
           actionLibraryList,

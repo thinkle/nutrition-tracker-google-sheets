@@ -419,9 +419,11 @@ function buildServer(env) {
     {
       description: `Create a new Speediance workout template. groupId and actionLibraryId are NOT the same value and cannot be guessed or duplicated from each other. Required workflow:
 1. Call list_exercises → get groupId for the exercise
-2. Call get_exercise_detail(groupId) → pick an actionLibraryId from actionLibraryList (prefer isDisplay=1, or first entry)
+2. Call get_exercise_detail(groupId) → pick an actionLibraryId from actionLibraryList (prefer isDisplay=1, or first entry). Also read isLeftRight from the detail root (1 = unilateral/single-arm, 0 = bilateral).
 Shortcut: existing templates from list_speediance_workouts contain confirmed working {groupId, actionLibraryId} pairs you can reuse.
-Alternatively, use create_speediance_workout to build a workout by exercise name and skip the ID lookup.
+Alternatively, use create_speediance_workout to build a workout by exercise name — it handles isLeftRight automatically.
+
+IMPORTANT: pass isLeftRight: 1 for any single-arm/single-leg exercise (check isLeftRight field in get_exercise_detail). Omitting it for a unilateral exercise will cause a Speediance API error.
 
 Modes:
 - "hypertrophy": 3 sets × 12 reps @ 13RM, 60s rest (default for muscle building)
@@ -434,6 +436,7 @@ For hypertrophy/strength you can override sets and rest; reps and RM are fixed b
           groupId:         z.number().describe("Exercise group ID from the library"),
           actionLibraryId: z.number().describe("Specific action/variant ID from exercise detail"),
           mode:            z.enum(["hypertrophy", "strength", "custom"]).describe("Training mode"),
+          isLeftRight:     z.number().optional().describe("1 for single-arm/single-leg exercises, 0 (default) for bilateral. Check isLeftRight in get_exercise_detail."),
           sets:            z.number().optional().describe("Override number of sets (default: 3 for hypertrophy, 5 for strength)"),
           rest:            z.number().optional().describe("Override rest time in seconds (default: 60 for hypertrophy, 90 for strength)"),
           reps:            z.number().optional().describe("(custom only) Reps per set"),
@@ -451,9 +454,21 @@ For hypertrophy/strength you can override sets and rest; reps and RM are fixed b
   server.registerTool(
     "create_speediance_workout",
     {
-      description: `Create a Speediance workout by exercise name — no ID lookup needed. The proxy resolves each exercise name to the correct groupId and actionLibraryId automatically.
-Use this instead of save_speediance_workout to avoid the two-step list_exercises → get_exercise_detail dance.
-Exercise names should match what's in the Speediance library (e.g. "Barbell Bench Press"). Partial/case-insensitive matches are supported.
+      description: `Create a Speediance workout template. Each exercise uses EITHER "name" (keyword search) OR "groupId" (direct ID) — not both.
+
+RECOMMENDED FLOW:
+1. Try name keywords first. If you get a "Multiple exercises match" error, the error lists each candidate as {"groupId": <id>} — copy the right one and replace your {"name":"..."} with {"groupId": <id>} in the next call.
+2. If you already know the groupId (from list_exercises, get_exercise_detail, or a previous error), skip name search and pass groupId directly.
+
+NAME KEYWORD RULES (when using "name"):
+- ALL words must appear in the library exercise name — be specific.
+- Include: attachment (barbell / dual-handle / rope / single-arm), position (standing / seated / kneeling / incline / supine), grip (overhand / wide-grip / close-grip).
+- On ambiguity: error shows candidates as {"groupId": N} — use groupId on retry instead of guessing more keywords.
+- On no match: error shows closest partial matches as {"groupId": N} — use those or adjust keywords.
+
+USING groupId (when using "groupId"):
+- Pass the number directly, e.g. {"groupId": 294, "mode": "hypertrophy"}.
+- Bypasses name matching entirely. Always works if the ID is valid.
 
 Modes:
 - "hypertrophy": 3 sets × 12 reps @ 13RM, 60s rest
@@ -462,12 +477,13 @@ Modes:
       inputSchema: {
         name: z.string().describe("Workout name"),
         exercises: z.array(z.object({
-          name:   z.string().describe("Exercise name as it appears in the Speediance library"),
-          mode:   z.enum(["hypertrophy", "strength", "custom"]).describe("Training mode"),
-          sets:   z.number().optional().describe("Override number of sets"),
-          rest:   z.number().optional().describe("Override rest time in seconds"),
-          reps:   z.number().optional().describe("(custom only) Reps per set"),
-          weight: z.number().optional().describe("(custom only) Weight in lbs"),
+          name:    z.string().optional().describe("Space-separated keywords — ALL must appear in the library exercise name. Include attachment, position, grip. Omit if using groupId."),
+          groupId: z.number().optional().describe("Direct groupId from list_exercises or an error response. Bypasses name matching. Omit if using name."),
+          mode:    z.enum(["hypertrophy", "strength", "custom"]).describe("Training mode"),
+          sets:    z.number().optional().describe("Override number of sets"),
+          rest:    z.number().optional().describe("Override rest time in seconds"),
+          reps:    z.number().optional().describe("(custom only) Reps per set"),
+          weight:  z.number().optional().describe("(custom only) Weight in lbs"),
         })).describe("List of exercises in order"),
       },
     },
