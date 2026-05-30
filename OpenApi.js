@@ -1,5 +1,5 @@
 /* exported getOpenApiSpec */
-/* global getDeployedWebAppUrl, FIXED_FIELDS_SPEC, NUTRIENTS_SPEC, METRICS_SPEC, GOALS_SPEC */
+/* global getDeployedWebAppUrl, FIXED_FIELDS_SPEC, NUTRIENTS_SPEC, METRICS_SPEC, GOALS_SPEC, ACTIVITY_SPEC */
 function getOpenApiSpec() {
   const baseUrl = getDeployedWebAppUrl();
 
@@ -21,6 +21,26 @@ function getOpenApiSpec() {
     },
     required: ["items"],
     description: "An object containing an array of LogItem objects for batch operations."
+  };
+
+  const activityItemSchema = {
+    type: "object",
+    properties: buildPropertiesSchema(ACTIVITY_SPEC),
+    required: getRequiredFields(ACTIVITY_SPEC),
+    description: "Represents a source-aware activity entry. Use positive TotalKcal and CarbGrams values."
+  };
+
+  const activityBatchSchema = {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        items: { $ref: "#/components/schemas/ActivityItem" },
+        description: "An array of ActivityItem objects for batch upserts."
+      }
+    },
+    required: ["items"],
+    description: "Batch activity upsert payload."
   };
 
   // Reusable endpoint details
@@ -176,6 +196,210 @@ function getOpenApiSpec() {
     }
   };
 
+  const activitiesDocs = {
+    get: {
+      operationId: "getActivities",
+      summary: "Fetch activities",
+      description: "Fetch source-aware activities. Filter by date, date range, or review status.",
+      parameters: [
+        {
+          name: "date",
+          in: "query",
+          required: false,
+          schema: { type: "string", format: "date" },
+          description: "Filter activities to this date in YYYY-MM-DD format."
+        },
+        {
+          name: "start_date",
+          in: "query",
+          required: false,
+          schema: { type: "string", format: "date" },
+          description: "Filter activities starting from this date."
+        },
+        {
+          name: "end_date",
+          in: "query",
+          required: false,
+          schema: { type: "string", format: "date" },
+          description: "Filter activities through this date."
+        },
+        {
+          name: "review",
+          in: "query",
+          required: false,
+          schema: { type: "string" },
+          description: "Filter activities by Review value, e.g. ok, legacy_only, source_matched, needs_review, duplicate, ignore."
+        },
+        {
+          name: "limit",
+          in: "query",
+          required: false,
+          schema: { type: "integer", default: 50 },
+          description: "Maximum number of items to return."
+        },
+        {
+          name: "offset",
+          in: "query",
+          required: false,
+          schema: { type: "integer", default: 0 },
+          description: "Number of items to skip."
+        }
+      ],
+      responses: {
+        "200": {
+          description: "Successful response with activities.",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  items: {
+                    type: "array",
+                    items: { $ref: "#/components/schemas/ActivityItem" }
+                  },
+                  total: { type: "integer" },
+                  limit: { type: "integer" },
+                  offset: { type: "integer" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    post: {
+      operationId: "postActivity",
+      summary: "Log or upsert an activity",
+      description: "Create or update one activity. Supply ActivityKey, or Source plus SourceID. Use positive TotalKcal and CarbGrams. To delete through POST, send action='delete' plus ActivityKey.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              oneOf: [
+                { $ref: "#/components/schemas/ActivityItem" },
+                { $ref: "#/components/schemas/ActivityBatch" }
+              ]
+            }
+          }
+        }
+      },
+      responses: {
+        "200": { description: "Activity updated or batch processed." },
+        "201": { description: "Activity created." }
+      }
+    },
+    delete: {
+      operationId: "deleteActivity",
+      summary: "Delete an activity",
+      description: "Delete an activity by ActivityKey. Cloudflare will forward this as POST with method=DELETE.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {
+                ActivityKey: { type: "string" }
+              },
+              required: ["ActivityKey"]
+            }
+          }
+        }
+      },
+      responses: {
+        "200": { description: "Activity deleted or not found." }
+      }
+    }
+  };
+
+  const settingsDocs = {
+    get: {
+      operationId: "getSettings",
+      summary: "Fetch nutrition settings",
+      description: "Fetch all nutrition settings, or one setting by key.",
+      parameters: [
+        {
+          name: "key",
+          in: "query",
+          required: false,
+          schema: { type: "string" },
+          description: "Optional setting key to fetch."
+        }
+      ],
+      responses: {
+        "200": {
+          description: "Settings response.",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  items: {
+                    type: "array",
+                    items: { $ref: "#/components/schemas/SettingItem" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    post: {
+      operationId: "updateSettings",
+      summary: "Create or update nutrition settings",
+      description: "Create or update one setting with Key/Value, or multiple settings with {settings:{key:value}}.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              oneOf: [
+                { $ref: "#/components/schemas/SettingItem" },
+                {
+                  type: "object",
+                  properties: {
+                    settings: {
+                      type: "object",
+                      additionalProperties: true
+                    }
+                  },
+                  required: ["settings"]
+                }
+              ]
+            }
+          }
+        }
+      },
+      responses: {
+        "200": { description: "Settings updated." }
+      }
+    },
+    delete: {
+      operationId: "deleteSetting",
+      summary: "Delete a nutrition setting",
+      description: "Delete one setting by Key. Usually prefer update over delete for defaults.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {
+                Key: { type: "string" }
+              },
+              required: ["Key"]
+            }
+          }
+        }
+      },
+      responses: {
+        "200": { description: "Setting deleted or not found." }
+      }
+    }
+  };
+
 
 
   return {
@@ -195,6 +419,19 @@ function getOpenApiSpec() {
       schemas: {
         LogItem: logItemSchema,
         Batch: batchSchema,
+        ActivityItem: activityItemSchema,
+        ActivityBatch: activityBatchSchema,
+        SettingItem: {
+          type: "object",
+          properties: {
+            Key: { type: "string" },
+            Value: {},
+            Description: { type: "string" },
+            UpdatedAt: { type: "string" }
+          },
+          required: ["Key", "Value"],
+          description: "A nutrition setting. Important keys include activity_credit_mode and activity_credit_rate."
+        },
         SummaryItem: {
           type: "object",
           properties: {
@@ -407,6 +644,21 @@ function getOpenApiSpec() {
         ...getLogsDocs,
         ...postLogsDocs
       },
+      "/food": {
+        ...postLogDocs
+      },
+      "/nutrition": {
+        ...postLogDocs
+      },
+      "/activities": {
+        ...activitiesDocs
+      },
+      "/activity": {
+        ...activitiesDocs
+      },
+      "/settings": {
+        ...settingsDocs
+      },
       "/summaries": {
         get: {
           operationId: "summaries",
@@ -533,7 +785,7 @@ function getOpenApiSpec() {
         post: {
           operationId: "postMetrics",
           summary: "Log new metrics",
-          description: "Log new metrics data.",
+          description: "Log new metrics data. To correct a weight entry, use PUT or POST with action='upsert' and Date/Weight. To delete an incorrect weight entry, use DELETE or POST with action='delete' and Date, optionally Weight.",
           requestBody: {
             required: true,
             content: {
@@ -549,6 +801,48 @@ function getOpenApiSpec() {
             "201": {
               description: "Metrics logged successfully."
             }
+          }
+        },
+        put: {
+          operationId: "upsertMetric",
+          summary: "Update or create a metric row",
+          description: "Update the metric row for a Date, or create it if missing. Use this to correct Weight values.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  ...buildPropertiesSchemaForMetrics()
+                }
+              }
+            }
+          },
+          responses: {
+            "200": { description: "Metric updated or created." }
+          }
+        },
+        delete: {
+          operationId: "deleteMetric",
+          summary: "Delete metric rows by date",
+          description: "Delete metric rows for a Date. Include Weight to narrow deletion when multiple rows exist for the same date.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    Date: { type: "string", format: "date" },
+                    Weight: { type: "number" }
+                  },
+                  required: ["Date"]
+                }
+              }
+            }
+          },
+          responses: {
+            "200": { description: "Metric rows deleted or not found." }
           }
         }
       },

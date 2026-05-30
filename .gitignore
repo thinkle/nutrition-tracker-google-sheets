@@ -4,9 +4,23 @@ secrets.txt
 .env.*
 .dev.vars
 .mcp-key
+.strava-token.json
 
 # Cloudflare build artifacts
 .wrangler/
+cloudflare/_worker_test/
 
 # Node dependencies
 node_modules/
+
+# Backup / scratch files
+*.backup
+*.__backup_*
+
+# Stray local data files (not project source)
+lastWorkoutBeforeBreak.json
+pullhinge.json
+squash-push.json
+workout.json
+cloudflare/workout.json
+cloudflare/TestWorkout.zwo

@@ -1,0 +1,19 @@
+# Copy this to .dev.vars for local `wrangler dev` testing.
+# .dev.vars is gitignored — never commit it.
+#
+# For production, set these via CLI instead of this file:
+#   wrangler secret put MCP_API_KEY
+#   wrangler secret put XERT_API_KEY
+
+# Bearer token that MCP clients (Claude.ai) must send to connect.
+# Generate a strong random value, e.g.:
+#   openssl rand -hex 32
+MCP_API_KEY=your-secret-token-here
+
+# API key for the Xert Cloudflare proxy (xert.tmhinkle.workers.dev).
+# This is the X-API-KEY value from your existing Xert setup.
+XERT_API_KEY=your-xert-api-key-here
+
+# API key for the USDA FoodData Central database.
+# Get one free at: https://fdc.nal.usda.gov/api-key
+USDA_API_KEY=your-usda-api-key-here

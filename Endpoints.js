@@ -100,6 +100,10 @@ function internalDoGet(e) {
       return handleGetTodaySummary(ss);
     } else if (path === 'logs' || path === 'log') {
       return handleGetLogs(e, ss);
+    } else if (path === 'activities' || path === 'activity') {
+      return handleGetActivities(e);
+    } else if (path === 'settings') {
+      return handleGetSettings(e);
     } else if (path === 'metrics') {
       return handleGetMetrics(e, ss);
     } else if (path === 'goals') {
@@ -157,10 +161,14 @@ function internalDoPost(e) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   try {
-    if (path === 'log' || path === 'logs') {
+    if (path === 'log' || path === 'logs' || path === 'food' || path === 'nutrition') {
       return handleLogRequest(e, ss, method);
+    } else if (path === 'activities' || path === 'activity') {
+      return handlePostActivity(e, method);
+    } else if (path === 'settings') {
+      return handlePostSettings(e, method);
     } else if (path === 'metrics') {
-      return handlePostMetrics(e, ss);
+      return handlePostMetrics(e, ss, method);
     } else if (path === 'goals') {
       return handlePostGoals(e, ss);
     } else if (path === 'logStrengthWorkout') {
@@ -196,19 +204,21 @@ function doPost(e) {
 function handleLogRequest(e, ss, method) {
   const logSheet = ss.getSheetByName('Log');
   const data = e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
+  const requestMethod = String(data.method || data.action || method || 'POST').toUpperCase();
 
   // Check if `data` is an array
   if (data.items && Array.isArray(data.items)) {
     console.log('Processing batch data');
     const items = data.items;
     const results = items.map(entry => {
-      return processLogEntry(logSheet, entry, method);
+      const itemMethod = String(entry.method || entry.action || requestMethod).toUpperCase();
+      return processLogEntry(logSheet, entry, itemMethod);
     });
     return sendJsonResponse({ results: results });
   }
 
   // Single entry handling (default behavior)
-  return sendJsonResponse(processLogEntry(logSheet, data, method));
+  return sendJsonResponse(processLogEntry(logSheet, data, requestMethod));
 }
 
 /**
@@ -313,9 +323,19 @@ function handleGetMetrics(e, ss) {
   return sendJsonResponse(paginateArray(metrics, e));
 }
 
-function handlePostMetrics(e, ss) {
+function handlePostMetrics(e, ss, method) {
   const metricsSheet = ss.getSheetByName('Metrics');
   const data = e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
+  const requestMethod = String(data.method || data.action || method || 'POST').toUpperCase();
+
+  if (requestMethod === 'PUT' || requestMethod === 'UPDATE' || requestMethod === 'UPSERT') {
+    return sendJsonResponse(upsertMetric(metricsSheet, data));
+  }
+
+  if (requestMethod === 'DELETE' || requestMethod === 'REMOVE') {
+    return sendJsonResponse(deleteMetric(metricsSheet, data));
+  }
+
   const success = logMetric(metricsSheet, data);
   return sendJsonResponse({ status: success ? 'created' : 'error' });
 }

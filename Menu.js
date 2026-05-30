@@ -9,6 +9,12 @@ function onOpen() {
     .addItem('Setup Goals Sheet', 'setupGoalsSheet')
     .addSeparator()
     .addItem('Setup Strength Sheets', 'setupStrengthSheets')
+    .addSeparator()
+    .addItem('Setup Activities Sheet', 'setupActivitiesSheet')
+    .addItem('Setup Nutrition Settings Sheet', 'setupNutritionSettingsSheet')
+    .addItem('Migrate Negative Log Rows to Activities', 'migrateNegativeLogRowsToActivitiesMenu')
+    .addItem('Reconcile Strava Legacy Duplicates', 'reconcileStravaLegacyActivityDuplicatesMenu')
+    .addItem('Reset Summary Formulas for Activities', 'resetSummaryFormulasForActivities')
     .addItem('Get API Info', 'showApiInfo')
     .addToUi();
 }

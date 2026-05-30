@@ -245,6 +245,136 @@ function buildServer(env) {
   );
 
   server.registerTool(
+    "log_activity",
+    {
+      description: "Log or upsert a source-aware activity. Use positive TotalKcal and CarbGrams. Provide ActivityKey, or Source plus SourceID, so repeated calls are idempotent.",
+      inputSchema: {
+        ActivityKey: z.string().optional().describe("Stable key, e.g. strava:123 or manual:2026-05-30-walk"),
+        Date: z.string().describe("Activity date in YYYY-MM-DD format"),
+        Type: z.string().optional().describe("Activity type, e.g. Ride, Walk, Hike, Strength"),
+        Name: z.string().describe("Activity name"),
+        Description: z.string().optional(),
+        TotalKcal: z.number().optional().describe("Positive total calories burned"),
+        CarbGrams: z.number().optional().describe("Positive grams of carbohydrate burned"),
+        CreditOverrideKcal: z.number().optional().describe("Optional explicit credit override; normally leave blank so Settings controls credit"),
+        Source: z.string().optional().describe("Source system, e.g. manual, strava, speediance, xert"),
+        SourceID: z.string().optional().describe("Stable source ID"),
+        StravaID: z.string().optional(),
+        XertID: z.string().optional(),
+        SpeedianceID: z.string().optional(),
+        Review: z.string().optional().describe("ok, needs_review, duplicate, ignore, legacy_only, source_matched"),
+        DistanceMeters: z.number().optional(),
+        DurationSec: z.number().optional(),
+      },
+    },
+    async (fields) => {
+      const body = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (v !== undefined) body[k] = v;
+      }
+      return ok(await nutritionRequest("/activities", { method: "POST", body: JSON.stringify(body) }));
+    }
+  );
+
+  server.registerTool(
+    "get_activities",
+    {
+      description: "Get activity rows, optionally filtered by date, date range, or Review status.",
+      inputSchema: {
+        date: z.string().optional().describe("Specific date in YYYY-MM-DD format"),
+        start_date: z.string().optional().describe("Start date in YYYY-MM-DD format"),
+        end_date: z.string().optional().describe("End date in YYYY-MM-DD format"),
+        review: z.string().optional().describe("Review value to filter, e.g. needs_review"),
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      },
+    },
+    async ({ date, start_date, end_date, review, limit, offset }) => {
+      const p = new URLSearchParams();
+      if (date) p.set("date", date);
+      if (start_date) p.set("start_date", start_date);
+      if (end_date) p.set("end_date", end_date);
+      if (review) p.set("review", review);
+      if (limit !== undefined) p.set("limit", String(limit));
+      if (offset !== undefined) p.set("offset", String(offset));
+      const qs = p.toString();
+      return ok(await nutritionRequest(`/activities${qs ? "?" + qs : ""}`));
+    }
+  );
+
+  server.registerTool(
+    "delete_activity",
+    {
+      description: "Delete an activity by ActivityKey. Use get_activities first if unsure.",
+      inputSchema: { ActivityKey: z.string().describe("The activity key to delete") },
+    },
+    async ({ ActivityKey }) =>
+      ok(await nutritionRequest("/activities", { method: "DELETE", body: JSON.stringify({ ActivityKey }) }))
+  );
+
+  server.registerTool(
+    "get_nutrition_settings",
+    {
+      description: "Get nutrition calculation settings such as activity_credit_mode and activity_credit_rate.",
+      inputSchema: { key: z.string().optional().describe("Optional setting key") },
+    },
+    async ({ key }) => ok(await nutritionRequest(key ? `/settings?key=${encodeURIComponent(key)}` : "/settings"))
+  );
+
+  server.registerTool(
+    "update_nutrition_settings",
+    {
+      description: "Update nutrition calculation settings. Use activity_credit_mode percent_total/carb_only/none and activity_credit_rate such as 0.5.",
+      inputSchema: {
+        activity_credit_mode: z.enum(["percent_total", "carb_only", "none"]).optional(),
+        activity_credit_rate: z.number().optional(),
+        carb_kcal_per_gram: z.number().optional(),
+        target_loss_rate_lb_per_week: z.number().optional(),
+      },
+    },
+    async (fields) => {
+      const settings = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (v !== undefined) settings[k] = v;
+      }
+      return ok(await nutritionRequest("/settings", { method: "POST", body: JSON.stringify({ settings }) }));
+    }
+  );
+
+  server.registerTool(
+    "upsert_weight",
+    {
+      description: "Correct or create a weight entry for a date. Prefer this over log_weight when fixing an incorrect agent-entered weight.",
+      inputSchema: {
+        Date: z.string().describe("Date in YYYY-MM-DD format"),
+        Weight: z.number().describe("Correct weight value"),
+        Notes: z.string().optional(),
+      },
+    },
+    async ({ Date, Weight, Notes }) => {
+      const body = { action: "upsert", Date, Weight };
+      if (Notes !== undefined) body.Notes = Notes;
+      return ok(await nutritionRequest("/metrics", { method: "POST", body: JSON.stringify(body) }));
+    }
+  );
+
+  server.registerTool(
+    "delete_weight",
+    {
+      description: "Delete weight/metric rows for a date. Include Weight to narrow deletion when multiple entries exist.",
+      inputSchema: {
+        Date: z.string().describe("Date in YYYY-MM-DD format"),
+        Weight: z.number().optional().describe("Optional exact weight value to narrow deletion"),
+      },
+    },
+    async ({ Date, Weight }) => {
+      const body = { action: "delete", Date };
+      if (Weight !== undefined) body.Weight = Weight;
+      return ok(await nutritionRequest("/metrics", { method: "POST", body: JSON.stringify(body) }));
+    }
+  );
+
+  server.registerTool(
     "list_strength_workouts",
     {
       description: "List strength workout summaries, optionally filtered by date range",

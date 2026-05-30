@@ -1,0 +1,33 @@
+name = "strava-nutrition-sync"
+main = "CloudflareStravaSync.js"
+compatibility_date = "2026-05-30"
+account_id = "8712c9df6541cb0d0f114963ca4590bc"
+workers_dev = true
+
+kv_namespaces = [
+  { binding = "SECRET_STORE", id = "6563467135684308aa4fc1db6d6a91f6" }
+]
+
+# Service binding to call the nutrition worker directly (avoids Cloudflare 1042 error
+# that occurs when workers fetch other workers.dev URLs over HTTP).
+[[services]]
+binding = "NUTRITION"
+service = "nutrition"
+
+# Run every 2 hours. Historical backfills should use the local script or manual /sync calls.
+[triggers]
+crons = ["17 */2 * * *"]
+
+# Set these with wrangler secret put --config wrangler-strava.toml NAME
+#   API_KEY
+#   STRAVA_CLIENT_ID
+#   STRAVA_CLIENT_SECRET
+#   NUTRITION_API_BASE
+# Optional:
+#   NUTRITION_API_TOKEN
+#
+# OAuth setup:
+#   1. Deploy the worker.
+#   2. Visit https://<worker>/auth/start.
+#   3. Approve Strava scopes.
+#   4. The callback stores STRAVA_ACCESS_TOKEN, STRAVA_REFRESH_TOKEN, and STRAVA_EXPIRES_AT in KV.
