@@ -1,1 +1,4 @@
-cloudflare/*
+cloudflare/**
+cloudflare-mcp/**
+mcp-local/**
+*nutrition-mcp*

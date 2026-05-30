@@ -121,7 +121,7 @@ function testHandleGetStrengthSetsFilter() {
     console.log('First 5 items:');
     console.log(items.slice(0, 5));
   }
-  
+
   // Now show what the actual /strength/sets endpoint returns (with pagination)
   console.log('\n--- Paginated response (as returned by API) ---');
   const paginated = paginateArray(items, { parameter: { limit: '50', offset: '0' } });
@@ -281,7 +281,10 @@ function replaceStrengthSets_(d) {
   const all = sh.getDataRange().getValues();
   const header = all.shift();
   const workoutIdCol = header.indexOf("WorkoutID");
-  const existingRows = all.filter(row => String(row[workoutIdCol]) === String(d.id));
+  // Track actual sheet row numbers (1-based, +2 accounts for header and 0-index shift)
+  const existingRows = all
+    .map((row, i) => ({ row, sheetRow: i + 2 }))
+    .filter(({ row }) => String(row[workoutIdCol]) === String(d.id));
 
   // Build new rows from payload
   const exercises = Array.isArray(d.cttActionLibraryTrainingInfoList)
@@ -334,17 +337,17 @@ function replaceStrengthSets_(d) {
   let appended = 0;
   // Overwrite existing rows for this workout
   for (let i = 0; i < Math.min(existingRows.length, rows.length); i++) {
+    const { row: existingRow, sheetRow } = existingRows[i];
     // Only update if different
     let isDifferent = false;
     for (let j = 0; j < headers.length; j++) {
-      if (String(existingRows[i][j]) !== String(rows[i][j])) {
+      if (String(existingRow[j]) !== String(rows[i][j])) {
         isDifferent = true;
         break;
       }
     }
     if (isDifferent) {
-      // Overwrite row in sheet
-      sh.getRange(i + 2, 1, 1, headers.length).setValues([rows[i]]);
+      sh.getRange(sheetRow, 1, 1, headers.length).setValues([rows[i]]);
       updated++;
     }
   }
