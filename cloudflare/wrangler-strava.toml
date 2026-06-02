@@ -14,9 +14,9 @@ kv_namespaces = [
 binding = "NUTRITION"
 service = "nutrition"
 
-# Run every 2 hours. Historical backfills should use the local script or manual /sync calls.
+# Run every 15 minutes at :00/:15/:30/:45.
 [triggers]
-crons = ["17 */2 * * *"]
+crons = ["0,15,30,45 * * * *"]
 
 # Set these with wrangler secret put --config wrangler-strava.toml NAME
 #   API_KEY
