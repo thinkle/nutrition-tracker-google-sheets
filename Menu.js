@@ -2,8 +2,8 @@
  * LIFECYCLE
  *******************/
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('Nutrition Tools')
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('Nutrition Tools')
     .addItem('Setup Spreadsheet', 'setupSpreadsheet')
     .addItem('Setup Metrics Sheet', 'setupMetricsSheet')
     .addItem('Setup Goals Sheet', 'setupGoalsSheet')
@@ -16,6 +16,13 @@ function onOpen() {
     .addItem('Reconcile Strava Legacy Duplicates', 'reconcileStravaLegacyActivityDuplicatesMenu')
     .addItem('Reset Summary Formulas for Activities', 'resetSummaryFormulasForActivities')
     .addItem('Get API Info', 'showApiInfo')
+    .addSeparator()
+    .addSubMenu(
+      ui.createMenu('Analysis')
+        .addItem('Run Phase Analysis', 'runPhaseAnalysis')
+        .addItem('Run Discount Sweep', 'runDiscountSweep')
+        .addItem('Compute Target…', 'computeTarget')
+    )
     .addToUi();
 }
 

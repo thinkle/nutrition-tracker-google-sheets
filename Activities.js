@@ -878,9 +878,9 @@ function resetSummaryFormulasForActivities() {
   const headers = [
     'Date',
     'Gross kcal',
-    'adjusted kcal (subtracting only carb burn)',
+    'Carb-credit kcal (gross - carb burn)',
     'Net kcal',
-    'Weighted kcal',
+    'Effective kcal (gross - activity credit)',
     'Activity credit kcal',
     'Total protein',
     'Total fat',
