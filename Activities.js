@@ -303,6 +303,7 @@ function upsertActivity(input) {
   const headers = data[0];
   const idx = getHeaderIndexMap_(headers);
   const activity = normalizeActivityInput_(input);
+  const disableLegacyMatch = toBool_(input && (input.DisableLegacyMatch !== undefined ? input.DisableLegacyMatch : input.disableLegacyMatch));
 
   if (!activity.ActivityKey) {
     return { status: 'error', message: 'ActivityKey or Source+SourceID required' };
@@ -317,7 +318,7 @@ function upsertActivity(input) {
     }
   }
 
-  if (rowNum < 0) {
+  if (rowNum < 0 && !disableLegacyMatch) {
     const legacyMatch = findLegacyActivityMatch_(data, idx, activity);
     if (legacyMatch.match) {
       rowNum = legacyMatch.match.rowNum;
@@ -614,6 +615,13 @@ function numberOrBlank_(v) {
   if (v === '' || v === null || v === undefined) return '';
   const n = Number(v);
   return isNaN(n) ? '' : n;
+}
+
+function toBool_(v) {
+  if (v === true || v === false) return v;
+  if (v === null || v === undefined) return false;
+  const text = String(v).trim().toLowerCase();
+  return text === '1' || text === 'true' || text === 'yes' || text === 'on';
 }
 
 function dateFromAny_(value) {

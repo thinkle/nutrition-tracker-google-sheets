@@ -83,4 +83,30 @@ Manual sync:
 curl -H "X-API-KEY: $API_KEY" "https://<worker-host>/sync?days=7"
 ```
 
-Scheduled sync runs every 2 hours by default.
+Safe debug dry run (does not post to Apps Script and does not advance cursor):
+
+```bash
+curl -H "X-API-KEY: $API_KEY" "https://<worker-host>/sync?days=7&dryRun=1&includeIds=1"
+```
+
+Sync health and last run status:
+
+```bash
+curl -H "X-API-KEY: $API_KEY" "https://<worker-host>/sync/status"
+```
+
+The status payload now includes:
+
+- last run source (`scheduled_cron` vs `manual_http`)
+- `fetched` vs `posted`
+- downstream Apps Script status summary (`created`, `updated`, `matched_legacy`, `error`)
+- cursor and token health
+
+Reliability knobs (Worker env vars):
+
+- `STRAVA_SYNC_OVERLAP_SEC` default `86400` (24h): each run re-fetches this much recent history to recover missed writes and updates.
+- `NUTRITION_POST_MAX_ATTEMPTS` default `3`: retries each batch post on transient failures.
+- `NUTRITION_POST_RETRY_BASE_MS` default `750`: exponential backoff base delay between retries.
+- `NUTRITION_POST_BATCH_SIZE` default `10`: batch size for POST /activities.
+
+Scheduled sync runs every 15 minutes.

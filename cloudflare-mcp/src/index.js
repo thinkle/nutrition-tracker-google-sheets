@@ -16,6 +16,8 @@ function buildServer(env) {
   const xertApiKey = env.XERT_API_KEY;
   const spedianceBase = "https://speediance.tmhinkle.workers.dev";
   const spedianceApiKey = env.SPEEDIANCE_API_KEY;
+  const stravaSyncBase = "https://strava-nutrition-sync.tmhinkle.workers.dev";
+  const stravaSyncApiKey = env.STRAVA_SYNC_API_KEY || env.STRAVA_API_KEY;
   // Recipe API is on Netlify (external), so regular fetch() works fine.
   const recipeBase = env.RECIPE_API_BASE;
   const recipeApiKey = env.RECIPE_API_KEY;
@@ -67,6 +69,29 @@ function buildServer(env) {
       : response.text();
   }
 
+  async function stravaSyncRequest(endpoint, options = {}) {
+    if (!stravaSyncApiKey) {
+      throw new Error("Missing STRAVA_SYNC_API_KEY secret for Strava sync diagnostics");
+    }
+    const target = `${stravaSyncBase}${endpoint}`;
+    const request = new Request(target, {
+      headers: {
+        "X-API-KEY": stravaSyncApiKey,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+      ...options,
+    });
+    const response = env.STRAVA_SYNC
+      ? await env.STRAVA_SYNC.fetch(request)
+      : await fetch(request);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Strava sync ${response.status}: ${text}`);
+    }
+    return response.json();
+  }
+
   async function recipeRequest(path, body) {
     const response = await fetch(`${recipeBase}${path}`, {
       method: "POST",
@@ -82,6 +107,15 @@ function buildServer(env) {
 
   function ok(result) {
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+
+  function localDateString(timeZone = "America/New_York") {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
   }
 
   // -------------------------------------------------------------------------
@@ -338,6 +372,105 @@ function buildServer(env) {
         if (v !== undefined) settings[k] = v;
       }
       return ok(await nutritionRequest("/settings", { method: "POST", body: JSON.stringify({ settings }) }));
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Strava sync diagnostics
+  // -------------------------------------------------------------------------
+
+  server.registerTool(
+    "get_strava_sync_status",
+    {
+      description: "Inspect Strava -> Nutrition sync health, including token/cursor state and the last recorded sync result. Use this first when the user asks whether Strava sync is running or why an activity may not have synced.",
+    },
+    async () => ok(await stravaSyncRequest("/sync/status"))
+  );
+
+  server.registerTool(
+    "diagnose_strava_activity_sync",
+    {
+      description: "Read-only Strava sync diagnostic. Dry-runs recent Strava activity fetches and compares returned Strava IDs with Nutrition Activities rows for a date. Does not post activities or advance the sync cursor.",
+      inputSchema: {
+        date: z.string().optional().describe("Nutrition activity date to compare in YYYY-MM-DD format. Defaults to today in the Nutrition sheet timezone if omitted by the caller."),
+        days: z.number().optional().default(1).describe("How many days of recent Strava activity to dry-run fetch"),
+        maxPages: z.number().optional().default(2).describe("Maximum Strava activity pages to fetch during the dry run"),
+      },
+    },
+    async ({ date, days, maxPages }) => {
+      const targetDate = date || localDateString();
+      const dryRunParams = new URLSearchParams();
+      dryRunParams.set("dryRun", "1");
+      dryRunParams.set("includeIds", "1");
+      dryRunParams.set("days", String(days || 1));
+      dryRunParams.set("maxPages", String(maxPages || 2));
+
+      const activityParams = new URLSearchParams();
+      activityParams.set("date", targetDate);
+      activityParams.set("limit", "100");
+
+      const [status, dryRun, nutritionActivities] = await Promise.all([
+        stravaSyncRequest("/sync/status"),
+        stravaSyncRequest(`/sync?${dryRunParams.toString()}`),
+        nutritionRequest(`/activities${activityParams.toString() ? "?" + activityParams.toString() : ""}`),
+      ]);
+
+      const stravaIds = Array.isArray(dryRun.ids)
+        ? dryRun.ids.map(String)
+        : (Array.isArray(dryRun.idSamples) ? dryRun.idSamples.map(String) : []);
+      const nutritionItems = Array.isArray(nutritionActivities.items) ? nutritionActivities.items : [];
+      const nutritionStravaIds = new Set(nutritionItems
+        .map(item => item.StravaID || item.SourceID || String(item.ActivityKey || "").replace(/^strava:/, ""))
+        .filter(Boolean)
+        .map(String));
+      const missingFromNutrition = stravaIds.filter(id => !nutritionStravaIds.has(id));
+
+      return ok({
+        status,
+        dryRun: {
+          runId: dryRun.runId,
+          fetched: dryRun.fetched,
+          after: dryRun.after,
+          before: dryRun.before,
+          ids: stravaIds,
+        },
+        nutritionActivities: {
+          date: targetDate,
+          total: nutritionActivities.total,
+          stravaIds: Array.from(nutritionStravaIds),
+          items: nutritionItems.map(item => ({
+            ActivityKey: item.ActivityKey,
+            StravaID: item.StravaID,
+            SourceID: item.SourceID,
+            StartTime: item.StartTime,
+            Name: item.Name,
+            TotalKcal: item.TotalKcal,
+            CarbGrams: item.CarbGrams,
+            Review: item.Review,
+            UpdatedAt: item.UpdatedAt,
+          })),
+        },
+        missingFromNutrition,
+      });
+    }
+  );
+
+  server.registerTool(
+    "retry_strava_sync",
+    {
+      description: "Manually run Strava -> Nutrition sync. This can write/update Nutrition Activities rows and advance the sync cursor. Use only when the user explicitly asks to retry or force a sync.",
+      inputSchema: {
+        days: z.number().optional().default(1).describe("How many days of Strava activity to fetch and post"),
+        maxPages: z.number().optional().default(2).describe("Maximum Strava activity pages to fetch"),
+        review: z.string().optional().describe("Optional Review value to set on posted activities"),
+      },
+    },
+    async ({ days, maxPages, review }) => {
+      const params = new URLSearchParams();
+      params.set("days", String(days || 1));
+      params.set("maxPages", String(maxPages || 2));
+      if (review) params.set("review", review);
+      return ok(await stravaSyncRequest(`/sync?${params.toString()}`, { method: "POST" }));
     }
   );
 

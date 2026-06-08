@@ -17,6 +17,10 @@ service = "xert"
 binding = "SPEEDIANCE"
 service = "speediance"
 
+[[services]]
+binding = "STRAVA_SYNC"
+service = "strava-nutrition-sync"
+
 [vars]
 RECIPE_API_BASE = "https://dev--gourmet-svelte.netlify.app/.netlify/functions/api"
 
@@ -26,3 +30,4 @@ RECIPE_API_BASE = "https://dev--gourmet-svelte.netlify.app/.netlify/functions/ap
 #   wrangler secret put RECIPE_API_KEY   (X-API-Key for the recipe tracker)
 #   wrangler secret put USDA_API_KEY        (API key from https://fdc.nal.usda.gov/api-key)
 #   wrangler secret put SPEEDIANCE_API_KEY  (X-API-KEY for speediance.tmhinkle.workers.dev — must match that worker's API_KEY secret)
+#   wrangler secret put STRAVA_SYNC_API_KEY (X-API-KEY for strava-nutrition-sync.tmhinkle.workers.dev)
