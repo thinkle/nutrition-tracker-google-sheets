@@ -46,6 +46,8 @@ function transformToGasPayload(workout) {
         id: `${workoutId}-ex${exercises.size + 1}`,
         actionLibraryId: exercise.catalogId || null,
         actionLibraryName: exercise.name || "Unknown exercise",
+        primaryMuscles: Array.isArray(exercise.primaryMuscles) ? exercise.primaryMuscles : [],
+        secondaryMuscles: Array.isArray(exercise.secondaryMuscles) ? exercise.secondaryMuscles : [],
         weights: [],
         finishedReps: [],
       });
@@ -69,6 +71,8 @@ function transformToGasPayload(workout) {
     id: entry.id,
     actionLibraryId: entry.actionLibraryId,
     actionLibraryName: entry.actionLibraryName,
+    ...(entry.primaryMuscles.length ? { primaryMuscles: entry.primaryMuscles } : {}),
+    ...(entry.secondaryMuscles.length ? { secondaryMuscles: entry.secondaryMuscles } : {}),
     ...(entry.weights.length ? {
       maxWeight: Math.max(...entry.weights),
       avgWeight: entry.weights.reduce((total, value) => total + value, 0) / entry.weights.length,

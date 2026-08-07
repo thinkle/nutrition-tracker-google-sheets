@@ -153,6 +153,7 @@ function handlePostStrengthWorkout(e) {
 
     const saveResult = saveStrengthWorkout_(data, raw);
     const replaceResult = replaceStrengthSets_(data);
+    const mappingResults = upsertExerciseMappingsFromWorkout_(data);
 
     return sendJsonResponse(
       {
@@ -161,6 +162,7 @@ function handlePostStrengthWorkout(e) {
         workoutRow: saveResult.rowNum,
         setsInserted: replaceResult.inserted,
         exercisesProcessed: replaceResult.exercises,
+        exerciseMappingsUpdated: mappingResults.length,
       },
       saveResult.status === "created" ? 201 : 200
     );

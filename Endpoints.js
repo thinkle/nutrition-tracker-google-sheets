@@ -173,6 +173,8 @@ function internalDoPost(e) {
       return handlePostGoals(e, ss);
     } else if (path === 'logStrengthWorkout') {
       return handlePostStrengthWorkout(e);
+    } else if (path === 'upsertExerciseMapping') {
+      return handlePostUpsertExerciseMapping(e);
     }
   } catch (error) {
     const errorDetails = {
