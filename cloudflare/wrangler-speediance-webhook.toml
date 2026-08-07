@@ -1,0 +1,21 @@
+name = "speediance-nutrition-webhook"
+main = "CloudflareSpeedianceWebhook.js"
+compatibility_date = "2026-08-07"
+account_id = "8712c9df6541cb0d0f114963ca4590bc"
+workers_dev = true
+
+# Service binding to call the nutrition worker directly (avoids Cloudflare 1042 error
+# that occurs when workers fetch other workers.dev URLs over HTTP).
+[[services]]
+binding = "NUTRITION"
+service = "nutrition"
+
+[observability]
+enabled = true
+
+# Set these with: wrangler secret put --config wrangler-speediance-webhook.toml NAME
+#   API_KEY              shared secret the Speediance PWA must send as X-API-KEY
+#   NUTRITION_API_BASE   e.g. https://nutrition.tmhinkle.workers.dev (fallback if the
+#                        NUTRITION service binding above isn't available locally)
+# Optional:
+#   NUTRITION_API_TOKEN  appended as ?token=... for direct GAS deployments
