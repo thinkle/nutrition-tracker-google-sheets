@@ -24,3 +24,6 @@ squash-push.json
 workout.json
 cloudflare/workout.json
 cloudflare/TestWorkout.zwo
+
+# Claude Code local/session files
+.claude/

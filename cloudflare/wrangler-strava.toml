@@ -18,6 +18,10 @@ service = "nutrition"
 [triggers]
 crons = ["0,15,30,45 * * * *"]
 
+# Persistent logs (incl. past cron events) so a stalled cron is visible next time.
+[observability]
+enabled = true
+
 # Set these with wrangler secret put --config wrangler-strava.toml NAME
 #   API_KEY
 #   STRAVA_CLIENT_ID

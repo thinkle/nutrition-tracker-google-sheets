@@ -1,14 +1,17 @@
 {
-	"folders": [
-		{
-			"path": "."
-		},
-		{
-			"path": "../../../Projects/UnofficialSpeedianceWorkoutManager"
-		},
-		{
-			"path": "../../../Projects/android-mitm-lab"
-		}
-	],
-	"settings": {}
+  "folders": [
+	{
+		"path": "."
+	},
+	{
+		"path": "../../../Projects/nutrition-mcp"
+	},
+	{
+		"path": "../../../Projects/strava"
+	},
+	{
+		"path": "../../../Projects/UnofficialSpeedianceWorkoutManager"
+	}
+],
+  "settings": {}
 }
