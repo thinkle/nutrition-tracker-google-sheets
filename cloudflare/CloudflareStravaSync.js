@@ -205,6 +205,112 @@ async function stravaGet(env, path, params = {}) {
   return data;
 }
 
+// ---------------------------------------------------------------------------
+// Weight reconciliation: nutrition sheet -> Strava athlete profile.
+//
+// Reconciler rather than a hook on log_weight, because weight also gets entered
+// straight into the sheet; anything keyed off the MCP tool would miss those. It
+// pushes only the single newest measurement, so backdated entries and
+// corrections can never overwrite current weight with stale data.
+//
+// The sheet stores POUNDS. Strava's athlete profile is KILOGRAMS.
+// ---------------------------------------------------------------------------
+
+const LB_PER_KG = 2.20462262185;
+// Strava rounds stored weight, so compare with a tolerance instead of equality,
+// otherwise we would PUT on every single cron tick forever.
+const WEIGHT_EPSILON_KG = 0.05;
+// Don't push a measurement this old — if logging lapses, leave Strava alone
+// rather than asserting a stale number as current.
+const WEIGHT_MAX_AGE_DAYS = 14;
+
+async function fetchLatestSheetWeightLb(env) {
+  const url = nutritionUrl(env, "/metrics");
+  url.searchParams.set("limit", "1");
+  const req = new Request(url.toString(), {
+    headers: { "Content-Type": "application/json" },
+  });
+  const resp = env.NUTRITION ? await env.NUTRITION.fetch(req) : await fetch(req);
+  if (!resp.ok) {
+    throw new Error(`Nutrition /metrics failed ${resp.status}: ${await resp.text()}`);
+  }
+  const data = await resp.json();
+  const latest = (data.items || [])[0];
+  if (!latest || latest.Weight === "" || latest.Weight === null || latest.Weight === undefined) {
+    return null;
+  }
+  const weightLb = Number(latest.Weight);
+  if (!Number.isFinite(weightLb) || weightLb <= 0) return null;
+  return { weightLb, date: latest.Date };
+}
+
+async function putStravaWeightKg(env, weightKg) {
+  const token = await getAccessToken(env);
+  const body = new URLSearchParams();
+  body.set("weight", weightKg.toFixed(2));
+  const resp = await fetch(`${STRAVA_API_BASE}/athlete`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.status === 401 || resp.status === 403) {
+    throw new Error(
+      `Strava PUT /athlete refused ${resp.status} — token likely lacks profile:write. ` +
+      `Re-authorize via /auth/start. Response: ${JSON.stringify(data)}`
+    );
+  }
+  if (!resp.ok) throw new Error(`Strava PUT /athlete failed ${resp.status}: ${JSON.stringify(data)}`);
+  return data;
+}
+
+async function reconcileWeight(env, { dryRun = false } = {}) {
+  const startedAt = new Date().toISOString();
+  const latest = await fetchLatestSheetWeightLb(env);
+  if (!latest) return { ok: true, skipped: "no weight in sheet", startedAt };
+
+  const ageDays = (Date.now() - new Date(latest.date).getTime()) / 86400000;
+  if (!Number.isFinite(ageDays) || ageDays > WEIGHT_MAX_AGE_DAYS) {
+    return { ok: true, skipped: `latest weight is ${Math.round(ageDays)}d old`, sheetDate: latest.date, startedAt };
+  }
+
+  const targetKg = latest.weightLb / LB_PER_KG;
+  const athlete = await stravaGet(env, "/athlete");
+  const currentKg = Number(athlete.weight);
+  const delta = Number.isFinite(currentKg) ? Math.abs(currentKg - targetKg) : Infinity;
+
+  const result = {
+    ok: true,
+    startedAt,
+    sheetDate: latest.date,
+    sheetWeightLb: latest.weightLb,
+    targetKg: Number(targetKg.toFixed(2)),
+    stravaKg: Number.isFinite(currentKg) ? currentKg : null,
+    dryRun,
+  };
+
+  if (delta <= WEIGHT_EPSILON_KG) return { ...result, updated: false, reason: "already in sync" };
+  if (dryRun) return { ...result, updated: false, reason: "dryRun" };
+
+  await putStravaWeightKg(env, targetKg);
+  return { ...result, updated: true, finishedAt: new Date().toISOString() };
+}
+
+async function reconcileWeightAndRecord(env, options = {}) {
+  try {
+    const status = await reconcileWeight(env, options);
+    await env.SECRET_STORE.put("STRAVA_LAST_WEIGHT_STATUS", JSON.stringify(status));
+    return status;
+  } catch (err) {
+    const failure = { ok: false, error: err.message, finishedAt: new Date().toISOString() };
+    await env.SECRET_STORE.put("STRAVA_LAST_WEIGHT_STATUS", JSON.stringify(failure));
+    throw err;
+  }
+}
+
 async function fetchActivities(env, { after, before, perPage = 100, maxPages = 10 } = {}) {
   const out = [];
   for (let page = 1; page <= maxPages; page++) {
@@ -475,8 +581,28 @@ export default {
         auth.searchParams.set("redirect_uri", redirectUri(request));
         auth.searchParams.set("response_type", "code");
         auth.searchParams.set("approval_prompt", "force");
-        auth.searchParams.set("scope", "read,activity:read_all");
+        // Union of scopes, not just the new one: Strava may replace rather than
+        // supplement an existing token's scopes on re-auth, so asking for
+        // profile:write alone would cost us activity:read_all and break the sync.
+        // profile:write is what allows PUT /athlete to update weight.
+        auth.searchParams.set("scope", "read,activity:read_all,profile:write");
         return Response.redirect(auth.toString(), 302);
+      }
+
+      // Manual weight reconcile. ?dryRun=1 reports what it would do without
+      // writing to Strava — use that to confirm scopes and units first.
+      if (path === "/weight/push") {
+        const unauthorized = requireApiKey(request, env);
+        if (unauthorized) return unauthorized;
+        const dryRun = parseBoolParam(url.searchParams.get("dryRun"));
+        return json(await reconcileWeightAndRecord(env, { dryRun }));
+      }
+
+      if (path === "/weight/status") {
+        const unauthorized = requireApiKey(request, env);
+        if (unauthorized) return unauthorized;
+        const raw = await env.SECRET_STORE.get("STRAVA_LAST_WEIGHT_STATUS");
+        return json(raw ? JSON.parse(raw) : { status: "never run" });
       }
 
       if (path === "/auth/callback") {
@@ -534,6 +660,13 @@ export default {
     ctx.waitUntil(
       syncStrava(env, { maxPages: 3, source: "scheduled_cron" }).catch(err => {
         console.log(`[scheduled] sync failed: ${err.message}`);
+      })
+    );
+    // Independent of the activity sync: a weight failure must not stop
+    // activities from syncing, and vice versa.
+    ctx.waitUntil(
+      reconcileWeightAndRecord(env).catch(err => {
+        console.log(`[scheduled] weight reconcile failed: ${err.message}`);
       })
     );
   },

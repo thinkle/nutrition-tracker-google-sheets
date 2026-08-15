@@ -4,6 +4,15 @@ compatibility_date = "2026-05-30"
 account_id = "8712c9df6541cb0d0f114963ca4590bc"
 workers_dev = true
 
+# Custom domain so Strava's OAuth redirect_uri lands on a host under the app's
+# configured Authorization Callback Domain (tomhinkle.net). redirectUri() derives
+# the callback from the request host, so authorizing via this hostname produces
+# https://strava-sync.tomhinkle.net/auth/callback, which Strava accepts.
+# Deliberately distinct from strava.tomhinkle.net, which is a separate project.
+routes = [
+  { pattern = "strava-sync.tomhinkle.net", custom_domain = true }
+]
+
 kv_namespaces = [
   { binding = "SECRET_STORE", id = "6563467135684308aa4fc1db6d6a91f6" }
 ]
