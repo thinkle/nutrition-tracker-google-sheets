@@ -218,14 +218,25 @@ async function stravaGet(env, path, params = {}) {
 
 const LB_PER_KG = 2.20462262185;
 // Strava rounds stored weight, so compare with a tolerance instead of equality,
-// otherwise we would PUT on every single cron tick forever.
-const WEIGHT_EPSILON_KG = 0.05;
+// otherwise we would PUT on every single cron tick forever. 0.1kg (0.22lb) sits
+// clear of any plausible rounding on their side and is far below a real change;
+// 0.05 was too tight — if Strava rounds to the nearest 0.1kg the worst-case gap
+// is exactly 0.05 and float noise decides whether we converge.
+const WEIGHT_EPSILON_KG = 0.1;
+// Skip the Strava round-trip entirely when the sheet hasn't moved since the last
+// push. Makes a write loop structurally impossible rather than tolerance-
+// dependent, and drops ~96 API calls/day to ~1.
+const WEIGHT_MEMO_KEY = "STRAVA_LAST_WEIGHT_PUSHED";
+// ...but still re-verify against Strava this often, so a weight changed directly
+// in Strava (or by another app) gets reconciled rather than trusted forever.
+const WEIGHT_REVERIFY_MS = 24 * 60 * 60 * 1000;
 // Don't push a measurement this old — if logging lapses, leave Strava alone
 // rather than asserting a stale number as current.
 const WEIGHT_MAX_AGE_DAYS = 14;
 
 async function fetchLatestSheetWeightLb(env) {
-  const url = nutritionUrl(env, "/metrics");
+  // nutritionUrl() returns a string, not a URL — re-parse before adding params.
+  const url = new URL(nutritionUrl(env, "/metrics"));
   url.searchParams.set("limit", "1");
   const req = new Request(url.toString(), {
     headers: { "Content-Type": "application/json" },
@@ -278,6 +289,24 @@ async function reconcileWeight(env, { dryRun = false } = {}) {
   }
 
   const targetKg = latest.weightLb / LB_PER_KG;
+
+  // Fast path: sheet unchanged since our last successful push, and we verified
+  // against Strava recently enough. Costs zero Strava calls.
+  if (!dryRun) {
+    const memoRaw = await env.SECRET_STORE.get(WEIGHT_MEMO_KEY);
+    if (memoRaw) {
+      try {
+        const memo = JSON.parse(memoRaw);
+        const fresh = Date.now() - new Date(memo.verifiedAt).getTime() < WEIGHT_REVERIFY_MS;
+        if (fresh && memo.sheetDate === latest.date && memo.sheetWeightLb === latest.weightLb) {
+          return { ok: true, startedAt, skipped: "unchanged since last push", sheetDate: latest.date, sheetWeightLb: latest.weightLb };
+        }
+      } catch {
+        // Unreadable memo: fall through to the authoritative check.
+      }
+    }
+  }
+
   const athlete = await stravaGet(env, "/athlete");
   const currentKg = Number(athlete.weight);
   const delta = Number.isFinite(currentKg) ? Math.abs(currentKg - targetKg) : Infinity;
@@ -292,10 +321,25 @@ async function reconcileWeight(env, { dryRun = false } = {}) {
     dryRun,
   };
 
-  if (delta <= WEIGHT_EPSILON_KG) return { ...result, updated: false, reason: "already in sync" };
+  // Record the memo whenever we've actually observed Strava's value, whether or
+  // not a write was needed — both outcomes mean sheet and Strava now agree.
+  const writeMemo = async () => {
+    await env.SECRET_STORE.put(WEIGHT_MEMO_KEY, JSON.stringify({
+      sheetDate: latest.date,
+      sheetWeightLb: latest.weightLb,
+      pushedKg: Number(targetKg.toFixed(2)),
+      verifiedAt: new Date().toISOString(),
+    }));
+  };
+
+  if (delta <= WEIGHT_EPSILON_KG) {
+    if (!dryRun) await writeMemo();
+    return { ...result, updated: false, reason: "already in sync" };
+  }
   if (dryRun) return { ...result, updated: false, reason: "dryRun" };
 
   await putStravaWeightKg(env, targetKg);
+  await writeMemo();
   return { ...result, updated: true, finishedAt: new Date().toISOString() };
 }
 
