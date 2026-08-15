@@ -1012,15 +1012,15 @@ function getOpenApiSpec() {
               name: "daysBack",
               in: "query",
               required: false,
-              schema: { type: "integer", default: 7 },
-              description: "How many days back to include (default 7)."
+              schema: { type: "integer", default: 365 },
+              description: "How many days back to include (default 365)."
             },
             {
               name: "focus",
               in: "query",
               required: false,
               schema: { type: "string" },
-              description: "Comma-separated list of body part columns. Valid values: quads, hamstrings, glutes, chest, back, shoulders, arms, core, calves. Matches if any column is 1."
+              description: "Comma-separated list of body part columns. Valid values: quads, hams (or hamstrings), glutes, chest, back, shoulders, arms, core, calves. Matches if any column is 1."
             },
             {
               name: "movement",

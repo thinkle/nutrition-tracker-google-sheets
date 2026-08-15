@@ -15,6 +15,8 @@ function onOpen() {
     .addItem('Migrate Negative Log Rows to Activities', 'migrateNegativeLogRowsToActivitiesMenu')
     .addItem('Reconcile Strava Legacy Duplicates', 'reconcileStravaLegacyActivityDuplicatesMenu')
     .addItem('Reset Summary Formulas for Activities', 'resetSummaryFormulasForActivities')
+    .addItem('Fill Missing Log Dates', 'fillMissingLogDates')
+    .addItem('Backfill Strength Set Timestamps', 'backfillStrengthSetTimestamps')
     .addItem('Get API Info', 'showApiInfo')
     .addSeparator()
     .addSubMenu(
@@ -22,6 +24,9 @@ function onOpen() {
         .addItem('Run Phase Analysis', 'runPhaseAnalysis')
         .addItem('Run Discount Sweep', 'runDiscountSweep')
         .addItem('Compute Target…', 'computeTarget')
+        .addSeparator()
+        .addItem('Build Trend Chart…', 'buildTrendChartPrompt')
+        .addItem('Rebuild Trend Chart', 'buildTrendChart')
     )
     .addToUi();
 }

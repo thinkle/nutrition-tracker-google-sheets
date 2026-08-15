@@ -1,7 +1,7 @@
 /**
  * GET /strength/sets/filter
  * Query params:
- *   daysBack: integer (optional, default 7)
+ *   daysBack: integer (optional, default 365)
  *   focus: comma-separated list of body part columns (optional)
  *   movement: string (optional, matches Movement Type)
  *   exercise: string (optional, matches ExerciseName)
@@ -23,11 +23,13 @@ function getStrengthSets(daysBack, opts) {
   headers.forEach((h, i) => idx[h] = i);
 
   opts = opts || {};
-  const focusCols = (opts.focus || []).map(s => s.trim().toLowerCase());
+  const focusCols = normalizeFocusColumns_(opts.focus || []);
   const movement = (opts.movementType || '').toLowerCase();
   const exercise = (opts.exercise || '').toLowerCase();
 
   // Date cutoff
+  daysBack = Number(daysBack);
+  if (!isFinite(daysBack) || daysBack <= 0) daysBack = 365;
   const now = new Date();
   const cutoff = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
 
@@ -41,8 +43,8 @@ function getStrengthSets(daysBack, opts) {
   // Filter rows
   const filtered = data.filter(row => {
     // Date filter
-    const ts = Number(row[idx[tsCol]]);
-    if (!ts || new Date(ts * 1000) < cutoff) return false;
+    const tsMillis = parseTimestampMillis_(row[idx[tsCol]]);
+    if (!tsMillis || new Date(tsMillis) < cutoff) return false;
 
     // Movement Type filter
     if (movement && String(row[idx['Movement Type']] || '').toLowerCase().indexOf(movement) === -1) return false;
@@ -74,6 +76,37 @@ function getStrengthSets(daysBack, opts) {
   });
   out.reverse();
   return out;
+}
+
+function normalizeFocusColumns_(focus) {
+  const aliases = {
+    hamstring: 'hams',
+    hamstrings: 'hams',
+    shoulder: 'shoulders',
+    arm: 'arms',
+    glute: 'glutes',
+    quad: 'quads',
+    calf: 'calves'
+  };
+  return (focus || [])
+    .map(s => String(s || '').trim().toLowerCase())
+    .filter(Boolean)
+    .map(s => aliases[s] || s);
+}
+
+function parseTimestampMillis_(value) {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  const n = Number(value);
+  if (isFinite(n) && n > 0) {
+    // Heuristic: >= 1e12 is already ms, otherwise treat as seconds.
+    return n >= 1e12 ? n : n * 1000;
+  }
+
+  const parsed = Date.parse(String(value || ''));
+  return isNaN(parsed) ? null : parsed;
 }
 
 function handleGetStrengthSetsFilter(e) {
@@ -317,10 +350,20 @@ function replaceStrengthSets_(d) {
       row[idx["MaxWeight"] - 1] = valOr_(ex.maxWeight);
       row[idx["MinWeight"] - 1] = valOr_(ex.minWeight);
       row[idx["WeightDetail"] - 1] = valOr_(set.weightDetail);
-      row[idx["StartTime"] - 1] = valOr_(ex.startTime);
-      row[idx["EndTime"] - 1] = valOr_(ex.endTime);
-      row[idx["startTimestamp"] - 1] = valOr_(ex.startTimestamp);
-      row[idx["endTimestamp"] - 1] = valOr_(ex.endTimestamp);
+      // Timestamps: prefer the set's own, then the exercise's, then fall back
+      // to the workout's. Without this, sets that arrive with no per-set time
+      // (gympal uploads, MCP-logged custom workouts) get a blank timestamp and
+      // are silently dropped by the date filter in getStrengthSets().
+      const setStartTs = firstTimestamp_(
+        set.startTimestamp, ex.startTimestamp, d.startTimestamp, d.endTimestamp,
+      );
+      const setEndTs = firstTimestamp_(
+        set.endTimestamp, ex.endTimestamp, d.endTimestamp, d.startTimestamp,
+      );
+      row[idx["StartTime"] - 1] = valOr_(ex.startTime, valOr_(set.startTime));
+      row[idx["EndTime"] - 1] = valOr_(ex.endTime, valOr_(set.endTime));
+      row[idx["startTimestamp"] - 1] = setStartTs;
+      row[idx["endTimestamp"] - 1] = setEndTs;
       row[idx["Calorie"] - 1] = valOr_(ex.calorie);
       row[idx["TotalCapacity"] - 1] = valOr_(ex.totalCapacity);
       row[idx["TrainingPartId2"] - 1] = valOr_(ex.trainingPartId2);
@@ -364,6 +407,80 @@ function replaceStrengthSets_(d) {
   return { inserted: updated + appended, exercises: exercisesCount };
 }
 
+/**
+ * One-time repair: fill blank per-set startTimestamp/endTimestamp from the
+ * parent workout's StartTimestamp/EndTimestamp. Existing sets ingested without
+ * per-set times (gympal uploads, MCP-logged custom workouts) are invisible to
+ * getStrengthSets() until their timestamp columns are populated. Safe to re-run.
+ */
+function backfillStrengthSetTimestamps() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const wsh = ss.getSheetByName(SHEET_STRENGTH_WORKOUTS);
+  const ssh = ss.getSheetByName(SHEET_STRENGTH_SETS);
+  if (!wsh || !ssh) {
+    SpreadsheetApp.getActive().toast('Strength sheets not found', 'Backfill', 6);
+    return 0;
+  }
+
+  // Workout time lookup: ID -> {start, end}
+  const wData = wsh.getDataRange().getValues();
+  const wHead = wData.shift();
+  const wIdx = {};
+  wHead.forEach((h, i) => (wIdx[h] = i));
+  const timeByWorkout = {};
+  wData.forEach((r) => {
+    const id = String(r[wIdx['ID']] || '');
+    if (id) {
+      timeByWorkout[id] = { start: r[wIdx['StartTimestamp']], end: r[wIdx['EndTimestamp']] };
+    }
+  });
+
+  const sData = ssh.getDataRange().getValues();
+  const sHead = sData.shift();
+  const sIdx = {};
+  sHead.forEach((h, i) => (sIdx[h] = i));
+  const startCol = sIdx['startTimestamp'];
+  const endCol = sIdx['endTimestamp'];
+  const widCol = sIdx['WorkoutID'];
+  if (startCol === undefined || endCol === undefined || widCol === undefined) {
+    SpreadsheetApp.getActive().toast(
+      'Missing expected column(s) in Strength Sets header', 'Backfill', 8,
+    );
+    return 0;
+  }
+  const isBlank = (v) => v === '' || v === null || v === undefined;
+
+  let filled = 0;
+  sData.forEach((r) => {
+    const wt = timeByWorkout[String(r[widCol] || '')];
+    if (!wt) return;
+    let changed = false;
+    if (isBlank(r[startCol])) {
+      const ts = firstTimestamp_(wt.start, wt.end);
+      if (!isBlank(ts)) { r[startCol] = ts; changed = true; }
+    }
+    if (isBlank(r[endCol])) {
+      const ts = firstTimestamp_(wt.end, wt.start);
+      if (!isBlank(ts)) { r[endCol] = ts; changed = true; }
+    }
+    if (changed) filled++;
+  });
+
+  // Write back ONLY the two timestamp columns. Rewriting the whole sheet in one
+  // call triggers "Service error: Spreadsheets" (oversized payload / cells);
+  // two single-column writes are small and reliable.
+  if (filled) {
+    ssh.getRange(2, startCol + 1, sData.length, 1)
+      .setValues(sData.map((r) => [r[startCol]]));
+    ssh.getRange(2, endCol + 1, sData.length, 1)
+      .setValues(sData.map((r) => [r[endCol]]));
+  }
+  SpreadsheetApp.getActive().toast(
+    'Backfilled ' + filled + ' set row(s) from workout times', 'Backfill', 6,
+  );
+  return filled;
+}
+
 function isPerformedSet_(set) {
   if (!set) return false;
   if (set.isFinish === true) return true;
@@ -388,6 +505,22 @@ function toNum_(v) {
 }
 function valOr_(v, def) {
   return v === undefined || v === null ? (def !== undefined ? def : "") : v;
+}
+
+/**
+ * Return the first argument that looks like a usable timestamp (epoch seconds/
+ * millis or a parseable date string), else "". Used to back-fill per-set times
+ * from workout-level times so timestamp-filtered reads still include the set.
+ */
+function firstTimestamp_() {
+  for (let i = 0; i < arguments.length; i++) {
+    const v = arguments[i];
+    if (v === undefined || v === null || v === "") continue;
+    const n = Number(v);
+    if (isFinite(n) && n > 0) return v;
+    if (!isNaN(Date.parse(String(v)))) return v;
+  }
+  return "";
 }
 
 /**

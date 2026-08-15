@@ -44,6 +44,12 @@ function createLog(sheet, data) {
   const nextRow = lastRow + 1;
   const newId = Utilities.getUuid();
 
+  // Default a missing/blank Date to today. A blank Date matches no day in the
+  // Summary formulas, so such an entry would silently count toward nothing.
+  if (data.Date === undefined || data.Date === null || String(data.Date).trim() === '') {
+    data = Object.assign({}, data, { Date: formatAsDateString(new Date()) });
+  }
+
   // Build row in correct order
   const rowData = headers.map(h => {
     if (h === 'ID') return newId;
@@ -93,4 +99,37 @@ function deleteLog(sheet, id) {
     }
   }
   return false;
+}
+
+/**
+ * One-time cleanup: fill any existing Log rows that have a blank Date with
+ * today's date, so they stop being excluded from every daily total.
+ * NOTE: this assigns TODAY to those rows — appropriate for a recent stray
+ * entry, but it will misdate a genuinely old blank row. Review results after.
+ * Returns { filled, date }.
+ */
+function fillMissingLogDates() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Log');
+  if (!sheet) return { filled: 0, error: 'No Log sheet' };
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const dateCol = headers.indexOf('Date');
+  const idCol = headers.indexOf('ID');
+  if (dateCol < 0) return { filled: 0, error: 'No Date column' };
+  const today = formatAsDateString(new Date());
+  let filled = 0;
+  for (var i = 1; i < values.length; i++) {
+    // Skip fully-empty rows; only touch real entries (have an ID or any content).
+    const hasContent = values[i].some(function (c) { return c !== '' && c !== null; });
+    if (!hasContent) continue;
+    if (idCol >= 0 && String(values[i][idCol]).trim() === '') continue;
+    const d = values[i][dateCol];
+    if (d === '' || d === null || String(d).trim() === '') {
+      sheet.getRange(i + 1, dateCol + 1).setValue(today);
+      filled++;
+    }
+  }
+  SpreadsheetApp.getActive().toast('Filled ' + filled + ' blank Log date(s) with ' + today, 'Log cleanup', 5);
+  return { filled: filled, date: today };
 }
