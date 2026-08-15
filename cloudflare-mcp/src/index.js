@@ -3,6 +3,25 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
+// Mobile-client compatibility: Claude's mobile app sends array/object-typed
+// tool parameters as JSON-encoded strings rather than parsed values (scalar
+// string/number params are unaffected). Wrap any array/object schema so a
+// string payload is JSON.parsed before validation runs. Leaves already-parsed
+// values and non-string junk untouched (schema then reports a real error).
+// ---------------------------------------------------------------------------
+
+function jsonParsed(schema) {
+  return z.preprocess((val) => {
+    if (typeof val !== "string") return val;
+    try {
+      return JSON.parse(val);
+    } catch {
+      return val; // let the wrapped schema surface a clear validation error
+    }
+  }, schema);
+}
+
+// ---------------------------------------------------------------------------
 // Build and connect a fresh McpServer for each request (stateless mode).
 // ---------------------------------------------------------------------------
 
@@ -130,12 +149,12 @@ function buildServer(env) {
         Food: z.string().describe("Name of the food item"),
         Description: z.string().optional().describe("Additional description"),
         Meal: z.string().describe("Meal type (Breakfast, Lunch, Dinner, Snack)"),
-        kcal: z.number().describe("Calories in kcal"),
-        protein: z.number().describe("Protein in grams"),
-        fat: z.number().describe("Fat in grams"),
-        carbs: z.number().describe("Carbohydrates in grams"),
-        fiber: z.number().optional().describe("Fiber in grams"),
-        added_sugar: z.number().optional().describe("Added sugar in grams; do NOT include natural sugars such as lactose in milk or fructose in fruit."),
+        kcal: z.coerce.number().describe("Calories in kcal"),
+        protein: z.coerce.number().describe("Protein in grams"),
+        fat: z.coerce.number().describe("Fat in grams"),
+        carbs: z.coerce.number().describe("Carbohydrates in grams"),
+        fiber: z.coerce.number().optional().describe("Fiber in grams"),
+        added_sugar: z.coerce.number().optional().describe("Added sugar in grams; do NOT include natural sugars such as lactose in milk or fructose in fruit."),
         Date: z.string().describe("Date in YYYY-MM-DD format. Required — always provide this, even for today's meals."),
       },
     },
@@ -166,7 +185,7 @@ function buildServer(env) {
     "get_summaries",
     {
       description: "Get nutrition summaries over time",
-      inputSchema: { limit: z.number().optional().describe("Maximum number of summaries to return") },
+      inputSchema: { limit: z.coerce.number().optional().describe("Maximum number of summaries to return") },
     },
     async ({ limit }) => ok(await nutritionRequest(limit ? `/summaries?limit=${limit}` : "/summaries"))
   );
@@ -177,7 +196,7 @@ function buildServer(env) {
       description: "Log a weight measurement. After logging, call get_weight_history to show the user their recent trend.",
       inputSchema: {
         Date: z.string().describe("Date of measurement in YYYY-MM-DD format"),
-        Weight: z.number().describe("Weight value"),
+        Weight: z.coerce.number().describe("Weight value"),
       },
     },
     async ({ Date, Weight }) =>
@@ -191,7 +210,7 @@ function buildServer(env) {
       inputSchema: {
         start_date: z.string().optional().describe("Start date in YYYY-MM-DD format (default: ~30 days ago)"),
         end_date: z.string().optional().describe("End date in YYYY-MM-DD format (default: today)"),
-        limit: z.number().optional().describe("Max items to return (default 50)"),
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
       },
     },
     async ({ start_date, end_date, limit }) => {
@@ -221,13 +240,13 @@ function buildServer(env) {
     {
       description: "Set new nutrition goals. Only include the fields you want to change.",
       inputSchema: {
-        kcal: z.number().optional().describe("Daily calorie target"),
-        protein: z.number().optional().describe("Daily protein target in grams"),
-        fat: z.number().optional().describe("Daily fat target in grams"),
-        carbs: z.number().optional().describe("Daily carbohydrate target in grams"),
-        fiber: z.number().optional().describe("Daily fiber target in grams"),
-        added_sugar: z.number().optional().describe("Daily added sugar target in grams"),
-        alcohol: z.number().optional().describe("Daily alcohol target in grams"),
+        kcal: z.coerce.number().optional().describe("Daily calorie target"),
+        protein: z.coerce.number().optional().describe("Daily protein target in grams"),
+        fat: z.coerce.number().optional().describe("Daily fat target in grams"),
+        carbs: z.coerce.number().optional().describe("Daily carbohydrate target in grams"),
+        fiber: z.coerce.number().optional().describe("Daily fiber target in grams"),
+        added_sugar: z.coerce.number().optional().describe("Daily added sugar target in grams"),
+        alcohol: z.coerce.number().optional().describe("Daily alcohol target in grams"),
       },
     },
     async (fields) => {
@@ -248,13 +267,13 @@ function buildServer(env) {
         Food: z.string().optional(),
         Description: z.string().optional(),
         Meal: z.string().optional(),
-        kcal: z.number().optional(),
-        protein: z.number().optional(),
-        fat: z.number().optional(),
-        carbs: z.number().optional(),
-        added_sugar: z.number().optional(),
-        fiber: z.number().optional(),
-        alcohol: z.number().optional(),
+        kcal: z.coerce.number().optional(),
+        protein: z.coerce.number().optional(),
+        fat: z.coerce.number().optional(),
+        carbs: z.coerce.number().optional(),
+        added_sugar: z.coerce.number().optional(),
+        fiber: z.coerce.number().optional(),
+        alcohol: z.coerce.number().optional(),
         Date: z.string().optional().describe("Updated date in YYYY-MM-DD format"),
       },
     },
@@ -281,24 +300,24 @@ function buildServer(env) {
   server.registerTool(
     "log_activity",
     {
-      description: "Log or upsert a source-aware activity. Use positive TotalKcal and CarbGrams. Provide ActivityKey, or Source plus SourceID, so repeated calls are idempotent.",
+      description: "Record a completed activity to CREDIT calories/carbs toward the nutrition day (e.g. a big untracked step day at a convention, or an untracked walk/hike). This is the calorie-credit path. For a manual entry set Source='manual' and an ActivityKey like 'manual:2026-07-05-walk' for idempotency; Source/SourceID matter mainly for automated syncs. Use positive TotalKcal and CarbGrams. Do NOT use this if a watch/Strava already synced the same activity — the credit would double-count. To record a strength session for volume/history WITHOUT calorie credit, use log_manual_strength instead.",
       inputSchema: {
         ActivityKey: z.string().optional().describe("Stable key, e.g. strava:123 or manual:2026-05-30-walk"),
         Date: z.string().describe("Activity date in YYYY-MM-DD format"),
         Type: z.string().optional().describe("Activity type, e.g. Ride, Walk, Hike, Strength"),
         Name: z.string().describe("Activity name"),
         Description: z.string().optional(),
-        TotalKcal: z.number().optional().describe("Positive total calories burned"),
-        CarbGrams: z.number().optional().describe("Positive grams of carbohydrate burned"),
-        CreditOverrideKcal: z.number().optional().describe("Optional explicit credit override; normally leave blank so Settings controls credit"),
+        TotalKcal: z.coerce.number().optional().describe("Positive total calories burned"),
+        CarbGrams: z.coerce.number().optional().describe("Positive grams of carbohydrate burned"),
+        CreditOverrideKcal: z.coerce.number().optional().describe("Optional explicit credit override; normally leave blank so Settings controls credit"),
         Source: z.string().optional().describe("Source system, e.g. manual, strava, speediance, xert"),
         SourceID: z.string().optional().describe("Stable source ID"),
         StravaID: z.string().optional(),
         XertID: z.string().optional(),
         SpeedianceID: z.string().optional(),
         Review: z.string().optional().describe("ok, needs_review, duplicate, ignore, legacy_only, source_matched"),
-        DistanceMeters: z.number().optional(),
-        DurationSec: z.number().optional(),
+        DistanceMeters: z.coerce.number().optional(),
+        DurationSec: z.coerce.number().optional(),
       },
     },
     async (fields) => {
@@ -319,8 +338,8 @@ function buildServer(env) {
         start_date: z.string().optional().describe("Start date in YYYY-MM-DD format"),
         end_date: z.string().optional().describe("End date in YYYY-MM-DD format"),
         review: z.string().optional().describe("Review value to filter, e.g. needs_review"),
-        limit: z.number().optional(),
-        offset: z.number().optional(),
+        limit: z.coerce.number().optional(),
+        offset: z.coerce.number().optional(),
       },
     },
     async ({ date, start_date, end_date, review, limit, offset }) => {
@@ -347,6 +366,36 @@ function buildServer(env) {
   );
 
   server.registerTool(
+    "update_activity",
+    {
+      description: "Update fields on an existing activity row (partial update). Identify the row by ActivityKey; ONLY the fields you pass are changed, everything else is preserved. Use get_activities first to find the ActivityKey. Common uses: fix a wrong calorie/carb estimate, correct the date/type/name, or mark a row as a duplicate via Review. To remove an activity entirely, use delete_activity instead. (If the ActivityKey doesn't exist, the backend will create it, so double-check the key.)",
+      inputSchema: {
+        ActivityKey: z.string().describe("Stable key identifying the activity to update, e.g. strava:123 or manual:2026-05-30-walk. Get it from get_activities."),
+        Date: z.string().optional().describe("Activity date in YYYY-MM-DD format"),
+        Type: z.string().optional().describe("Activity type, e.g. Ride, Walk, Hike, Strength"),
+        Name: z.string().optional().describe("Activity name"),
+        Description: z.string().optional(),
+        TotalKcal: z.coerce.number().optional().describe("Positive total calories burned"),
+        CarbGrams: z.coerce.number().optional().describe("Positive grams of carbohydrate burned"),
+        CreditOverrideKcal: z.coerce.number().optional().describe("Explicit credit override; normally leave blank so Settings controls credit"),
+        Review: z.string().optional().describe("ok, needs_review, duplicate, ignore, legacy_only, source_matched"),
+        ReviewNote: z.string().optional(),
+        DistanceMeters: z.coerce.number().optional(),
+        DurationSec: z.coerce.number().optional(),
+      },
+    },
+    async (fields) => {
+      // DisableLegacyMatch keeps this a precise key-targeted update — no fuzzy
+      // legacy matching. The GAS upsert changes only the fields we send.
+      const body = { DisableLegacyMatch: true };
+      for (const [k, v] of Object.entries(fields)) {
+        if (v !== undefined) body[k] = v;
+      }
+      return ok(await nutritionRequest("/activities", { method: "POST", body: JSON.stringify(body) }));
+    }
+  );
+
+  server.registerTool(
     "get_nutrition_settings",
     {
       description: "Get nutrition calculation settings such as activity_credit_mode and activity_credit_rate.",
@@ -361,9 +410,9 @@ function buildServer(env) {
       description: "Update nutrition calculation settings. Use activity_credit_mode percent_total/carb_only/none and activity_credit_rate such as 0.5.",
       inputSchema: {
         activity_credit_mode: z.enum(["percent_total", "carb_only", "none"]).optional(),
-        activity_credit_rate: z.number().optional(),
-        carb_kcal_per_gram: z.number().optional(),
-        target_loss_rate_lb_per_week: z.number().optional(),
+        activity_credit_rate: z.coerce.number().optional(),
+        carb_kcal_per_gram: z.coerce.number().optional(),
+        target_loss_rate_lb_per_week: z.coerce.number().optional(),
       },
     },
     async (fields) => {
@@ -393,8 +442,8 @@ function buildServer(env) {
       description: "Read-only Strava sync diagnostic. Dry-runs recent Strava activity fetches and compares returned Strava IDs with Nutrition Activities rows for a date. Does not post activities or advance the sync cursor.",
       inputSchema: {
         date: z.string().optional().describe("Nutrition activity date to compare in YYYY-MM-DD format. Defaults to today in the Nutrition sheet timezone if omitted by the caller."),
-        days: z.number().optional().default(1).describe("How many days of recent Strava activity to dry-run fetch"),
-        maxPages: z.number().optional().default(2).describe("Maximum Strava activity pages to fetch during the dry run"),
+        days: z.coerce.number().optional().default(1).describe("How many days of recent Strava activity to dry-run fetch"),
+        maxPages: z.coerce.number().optional().default(2).describe("Maximum Strava activity pages to fetch during the dry run"),
       },
     },
     async ({ date, days, maxPages }) => {
@@ -460,8 +509,8 @@ function buildServer(env) {
     {
       description: "Manually run Strava -> Nutrition sync. This can write/update Nutrition Activities rows and advance the sync cursor. Use only when the user explicitly asks to retry or force a sync.",
       inputSchema: {
-        days: z.number().optional().default(1).describe("How many days of Strava activity to fetch and post"),
-        maxPages: z.number().optional().default(2).describe("Maximum Strava activity pages to fetch"),
+        days: z.coerce.number().optional().default(1).describe("How many days of Strava activity to fetch and post"),
+        maxPages: z.coerce.number().optional().default(2).describe("Maximum Strava activity pages to fetch"),
         review: z.string().optional().describe("Optional Review value to set on posted activities"),
       },
     },
@@ -480,7 +529,7 @@ function buildServer(env) {
       description: "Correct or create a weight entry for a date. Prefer this over log_weight when fixing an incorrect agent-entered weight.",
       inputSchema: {
         Date: z.string().describe("Date in YYYY-MM-DD format"),
-        Weight: z.number().describe("Correct weight value"),
+        Weight: z.coerce.number().describe("Correct weight value"),
         Notes: z.string().optional(),
       },
     },
@@ -497,7 +546,7 @@ function buildServer(env) {
       description: "Delete weight/metric rows for a date. Include Weight to narrow deletion when multiple entries exist.",
       inputSchema: {
         Date: z.string().describe("Date in YYYY-MM-DD format"),
-        Weight: z.number().optional().describe("Optional exact weight value to narrow deletion"),
+        Weight: z.coerce.number().optional().describe("Optional exact weight value to narrow deletion"),
       },
     },
     async ({ Date, Weight }) => {
@@ -514,8 +563,8 @@ function buildServer(env) {
       inputSchema: {
         startDate: z.string().optional().describe("Start date in YYYY-MM-DD format"),
         endDate: z.string().optional().describe("End date in YYYY-MM-DD format"),
-        limit: z.number().optional().describe("Max items to return (default 50)"),
-        offset: z.number().optional().describe("Items to skip (default 0)"),
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
       },
     },
     async ({ startDate, endDate, limit, offset }) => {
@@ -533,7 +582,7 @@ function buildServer(env) {
     "get_strength_workout",
     {
       description: "Get a single strength workout and all its sets by workout ID",
-      inputSchema: { id: z.number().describe("The workout ID") },
+      inputSchema: { id: z.coerce.number().describe("The workout ID") },
     },
     async ({ id }) => ok(await nutritionRequest(`/strength/workout?id=${id}`))
   );
@@ -543,12 +592,12 @@ function buildServer(env) {
     {
       description: "Query strength set rows filtered by time window, body focus, movement type, or exercise name. Use for exercise history and progress analysis.",
       inputSchema: {
-        daysBack: z.number().optional().describe("How many days back to include (default 7)"),
-        focus: z.string().optional().describe("Comma-separated body parts: quads, hamstrings, glutes, chest, back, shoulders, arms, core, calves"),
+        daysBack: z.coerce.number().optional().describe("How many days back to include (default 365)"),
+        focus: z.string().optional().describe("Comma-separated body parts: quads, hams (or hamstrings), glutes, chest, back, shoulders, arms, core, calves"),
         movement: z.string().optional().describe("Partial match against movement type, e.g. 'Squat'"),
         exercise: z.string().optional().describe("Partial, case-insensitive match against exercise name"),
-        limit: z.number().optional().describe("Max items to return (default 50)"),
-        offset: z.number().optional().describe("Items to skip (default 0)"),
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
       },
     },
     async ({ daysBack, focus, movement, exercise, limit, offset }) => {
@@ -569,8 +618,8 @@ function buildServer(env) {
     {
       description: "List all distinct exercises recorded in strength workouts",
       inputSchema: {
-        limit: z.number().optional().describe("Max items to return (default 50)"),
-        offset: z.number().optional().describe("Items to skip (default 0)"),
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
       },
     },
     async ({ limit, offset }) => {
@@ -587,8 +636,8 @@ function buildServer(env) {
     {
       description: "Get strength workouts completed in the last 24 hours",
       inputSchema: {
-        limit: z.number().optional().describe("Max items to return (default 50)"),
-        offset: z.number().optional().describe("Items to skip (default 0)"),
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
       },
     },
     async ({ limit, offset }) => {
@@ -607,8 +656,8 @@ function buildServer(env) {
       inputSchema: {
         exerciseId: z.string().optional().describe("Exercise ID"),
         exerciseName: z.string().optional().describe("Exercise name (partial match)"),
-        limit: z.number().optional().describe("Max items to return (default 50)"),
-        offset: z.number().optional().describe("Items to skip (default 0)"),
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
       },
     },
     async ({ exerciseId, exerciseName, limit, offset }) => {
@@ -625,7 +674,7 @@ function buildServer(env) {
   server.registerTool(
     "log_strength_workout",
     {
-      description: "Ingest a Speediance workout payload (StrengthIngestWrapper format with 'data' property, or raw workout object).",
+      description: "Ingest a raw Speediance workout payload (StrengthIngestWrapper format with 'data' property, or raw workout object) into strength HISTORY. This is the machine-export ingestion path. For a hand-described manual session (exercise names, sets, reps), use log_manual_strength instead. NOTE: strength logging records volume/history only and does NOT credit calories to the nutrition day.",
       inputSchema: { workoutData: z.string().describe("JSON string of the Speediance workout payload") },
     },
     async ({ workoutData }) =>
@@ -633,6 +682,69 @@ function buildServer(env) {
         method: "POST",
         body: JSON.stringify(JSON.parse(workoutData)),
       }))
+  );
+
+  server.registerTool(
+    "log_manual_strength",
+    {
+      description: `Record a completed strength session described in plain terms (exercise names, sets, reps, optional weight/hold time) into strength HISTORY for volume and progress tracking (e.g. "how much pec work this month"). Queryable afterward via get_strength_sets / get_exercise_data by exercise name.
+
+IMPORTANT — this does NOT credit calories to the nutrition day. Use it when a watch/Strava tracked (or will track) the workout and the calorie burn will arrive automatically via Strava sync, OR when you only care about tracking muscle work. If the activity was NOT tracked by any device and the user wants calorie credit, use log_activity instead (and do not double-log the same session in both if a device already supplied the burn).
+
+For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done 3 times = one exercise "Push-ups" with sets=3, reps=8.`,
+      inputSchema: {
+        date: z.string().describe("Workout date in YYYY-MM-DD format"),
+        name: z.string().optional().describe("Session name, e.g. 'Hotel bodyweight circuit'"),
+        calories: z.coerce.number().optional().describe("Optional calorie estimate. Stored in strength history only for reference — NEVER credited to the nutrition day."),
+        exercises: jsonParsed(z.array(z.object({
+          name: z.string().describe("Exercise name, e.g. 'Push-ups', 'Wall sit', 'Bodyweight squat'"),
+          sets: z.coerce.number().optional().describe("Number of sets performed (default 1)"),
+          reps: z.coerce.number().optional().describe("Reps per set. Omit for a purely timed hold."),
+          weight: z.coerce.number().optional().describe("Weight per rep in the user's usual unit. Omit for bodyweight."),
+          time: z.coerce.number().optional().describe("Duration per set in seconds, for timed holds like a wall sit."),
+        }))).describe("Exercises performed, in order"),
+      },
+    },
+    async ({ date, name, calories, exercises }) => {
+      const day = String(date || "").slice(0, 10);
+      // Noon UTC keeps the calendar date stable across US timezones when the
+      // GAS side reformats endTimestamp back to yyyy-MM-dd.
+      const ts = Math.floor(new Date(`${day}T12:00:00Z`).getTime() / 1000);
+      const workoutId = `manual-${day}-${Math.random().toString(36).slice(2, 8)}`;
+      const list = (exercises || []).map((ex, exIdx) => {
+        const setCount = ex.sets && ex.sets > 0 ? Math.round(ex.sets) : 1;
+        const finishedReps = [];
+        for (let i = 0; i < setCount; i++) {
+          const set = { ix: i + 1, isFinish: true };
+          if (ex.reps !== undefined) { set.finishedCount = ex.reps; set.targetCount = ex.reps; }
+          if (ex.time !== undefined) set.time = ex.time;
+          if (ex.weight !== undefined) { set.avgWeight = ex.weight; set.weightDetail = String(ex.weight); }
+          finishedReps.push(set);
+        }
+        return {
+          id: `${workoutId}-ex${exIdx + 1}`,
+          actionLibraryName: ex.name,
+          maxWeight: ex.weight,
+          avgWeight: ex.weight,
+          finishedReps,
+        };
+      });
+      const payload = {
+        data: {
+          id: workoutId,
+          templateName: name || "Manual strength workout",
+          startTimestamp: ts,
+          endTimestamp: ts,
+          calorie: calories,
+          trainingCount: list.length,
+          cttActionLibraryTrainingInfoList: list,
+        },
+      };
+      return ok(await nutritionRequest("/logStrengthWorkout", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }));
+    }
   );
 
   // -------------------------------------------------------------------------
@@ -655,7 +767,7 @@ function buildServer(env) {
     "get_exercise_detail",
     {
       description: "Get full detail for one exercise group, including the actionLibraryList — the source of valid actionLibraryId values required by save_speediance_workout. Pick the first entry where isDisplay=1, or the first entry if none are marked. The groupId parameter is the id field from list_exercises.",
-      inputSchema: { groupId: z.number().describe("The exercise groupId (the 'id' field from list_exercises)") },
+      inputSchema: { groupId: z.coerce.number().describe("The exercise groupId (the 'id' field from list_exercises)") },
     },
     async ({ groupId }) => ok(await spedianceRequest(`/exercise/${groupId}`))
   );
@@ -695,16 +807,16 @@ Modes:
 For hypertrophy/strength you can override sets and rest; reps and RM are fixed by the mode.`,
       inputSchema: {
         name: z.string().describe("Workout name"),
-        exercises: z.array(z.object({
-          groupId:         z.number().describe("Exercise group ID from the library"),
-          actionLibraryId: z.number().describe("Specific action/variant ID from exercise detail"),
+        exercises: jsonParsed(z.array(z.object({
+          groupId:         z.coerce.number().describe("Exercise group ID from the library"),
+          actionLibraryId: z.coerce.number().describe("Specific action/variant ID from exercise detail"),
           mode:            z.enum(["hypertrophy", "strength", "custom"]).describe("Training mode"),
-          isLeftRight:     z.number().optional().describe("1 for single-arm/single-leg exercises, 0 (default) for bilateral. Check isLeftRight in get_exercise_detail."),
-          sets:            z.number().optional().describe("Override number of sets (default: 3 for hypertrophy, 5 for strength)"),
-          rest:            z.number().optional().describe("Override rest time in seconds (default: 60 for hypertrophy, 90 for strength)"),
-          reps:            z.number().optional().describe("(custom only) Reps per set"),
-          weight:          z.number().optional().describe("(custom only) Weight in lbs"),
-        })).describe("List of exercises in order"),
+          isLeftRight:     z.coerce.number().optional().describe("1 for single-arm/single-leg exercises, 0 (default) for bilateral. Check isLeftRight in get_exercise_detail."),
+          sets:            z.coerce.number().optional().describe("Override number of sets (default: 3 for hypertrophy, 5 for strength)"),
+          rest:            z.coerce.number().optional().describe("Override rest time in seconds (default: 60 for hypertrophy, 90 for strength)"),
+          reps:            z.coerce.number().optional().describe("(custom only) Reps per set"),
+          weight:          z.coerce.number().optional().describe("(custom only) Weight in lbs"),
+        }))).describe("List of exercises in order"),
       },
     },
     async ({ name, exercises }) =>
@@ -717,7 +829,9 @@ For hypertrophy/strength you can override sets and rest; reps and RM are fixed b
   server.registerTool(
     "create_speediance_workout",
     {
-      description: `Create a Speediance workout template. Each exercise uses EITHER "name" (keyword search) OR "groupId" (direct ID) — not both.
+      description: `Build a Speediance workout TEMPLATE on the machine — a plan to perform later. This does NOT record a completed workout and writes nothing to nutrition or strength history. To log a session you already did, use log_manual_strength (history) and/or log_activity (calorie credit).
+
+Each exercise uses EITHER "name" (keyword search) OR "groupId" (direct ID) — not both.
 
 RECOMMENDED FLOW:
 1. Try name keywords first. If you get a "Multiple exercises match" error, the error lists each candidate as {"groupId": <id>} — copy the right one and replace your {"name":"..."} with {"groupId": <id>} in the next call.
@@ -739,15 +853,15 @@ Modes:
 - "custom":      you specify sets, reps, weight (lbs), and rest`,
       inputSchema: {
         name: z.string().describe("Workout name"),
-        exercises: z.array(z.object({
+        exercises: jsonParsed(z.array(z.object({
           name:    z.string().optional().describe("Space-separated keywords — ALL must appear in the library exercise name. Include attachment, position, grip. Omit if using groupId."),
-          groupId: z.number().optional().describe("Direct groupId from list_exercises or an error response. Bypasses name matching. Omit if using name."),
+          groupId: z.coerce.number().optional().describe("Direct groupId from list_exercises or an error response. Bypasses name matching. Omit if using name."),
           mode:    z.enum(["hypertrophy", "strength", "custom"]).describe("Training mode"),
-          sets:    z.number().optional().describe("Override number of sets"),
-          rest:    z.number().optional().describe("Override rest time in seconds"),
-          reps:    z.number().optional().describe("(custom only) Reps per set"),
-          weight:  z.number().optional().describe("(custom only) Weight in lbs"),
-        })).describe("List of exercises in order"),
+          sets:    z.coerce.number().optional().describe("Override number of sets"),
+          rest:    z.coerce.number().optional().describe("Override rest time in seconds"),
+          reps:    z.coerce.number().optional().describe("(custom only) Reps per set"),
+          weight:  z.coerce.number().optional().describe("(custom only) Weight in lbs"),
+        }))).describe("List of exercises in order"),
       },
     },
     async ({ name, exercises }) =>
@@ -761,7 +875,7 @@ Modes:
     "delete_speediance_workout",
     {
       description: "Delete a saved Speediance workout template by its numeric ID. Use list_speediance_workouts to find the ID first.",
-      inputSchema: { id: z.number().describe("The template ID to delete") },
+      inputSchema: { id: z.coerce.number().describe("The template ID to delete") },
     },
     async ({ id }) => ok(await spedianceRequest(`/workout/${id}`, { method: "DELETE" }))
   );
@@ -813,7 +927,7 @@ Modes:
     "get_speediance_activity",
     {
       description: "Get full exercise-by-exercise detail for a single Speediance training session, including sets, reps, and weight for each exercise. Use the trainingId field from get_speediance_history results.",
-      inputSchema: { trainingId: z.number().describe("The trainingId from a get_speediance_history result") },
+      inputSchema: { trainingId: z.coerce.number().describe("The trainingId from a get_speediance_history result") },
     },
     async ({ trainingId }) => ok(await spedianceRequest(`/training/${trainingId}`))
   );
@@ -826,15 +940,41 @@ Modes:
     "get_recent_rides",
     {
       description: "Get recent cycling activities from Xert (name, date, distance, elevation, etc.)",
-      inputSchema: { days: z.number().optional().default(7).describe("Number of days to look back (default: 7)") },
+      inputSchema: { days: z.coerce.number().optional().default(7).describe("Number of days to look back (default: 7)") },
     },
     async ({ days }) => ok(await xertRequest(`/recentRides?days=${days}`))
   );
 
   server.registerTool(
     "get_fitness_profile",
-    { description: "Get the user's current Xert fitness signature including FTP, peak power, and training status" },
-    async () => ok(await xertRequest("/profile"))
+    {
+      description:
+        "Get the user's current Xert fitness signature (FTP, peak power, LTP, HIE) and training status, together with today's training info — the recommended workout of the day and strain (XSS) targets. Returns { fitness_profile, training_info }; training_info is null if that call fails.",
+    },
+    async () => {
+      // Two small payloads, fetched in parallel. They are nested rather than
+      // merged because both carry a `signature` and they disagree on units:
+      // /user reports hie in joules, /training_info in kilojoules. Keeping the
+      // provenance avoids one silently overwriting the other.
+      const [profile, training] = await Promise.all([
+        xertRequest("/user"),
+        // Fail soft: a bad /training_info must not take the whole profile down.
+        xertRequest("/training_info").catch((err) => ({
+          success: false,
+          error: String(err.message || err),
+        })),
+      ]);
+      return ok({ fitness_profile: profile, training_info: training });
+    }
+  );
+
+  server.registerTool(
+    "get_training_info",
+    {
+      description:
+        "Get today's Xert training recommendation on its own: the recommended workout of the day (wotd), target strain (targetXSS) broken into low/high/peak, current training load, fitness signature, and freshness status. Use this when planning or shaping a ride for today. Note: hie is reported in kilojoules here, unlike get_fitness_profile.",
+    },
+    async () => ok(await xertRequest("/training_info"))
   );
 
   server.registerTool(
@@ -851,7 +991,7 @@ Modes:
     {
       description: "Schedule a workout on the user's Xert calendar",
       inputSchema: {
-        workoutId: z.number().describe("The ID of the workout to schedule"),
+        workoutId: z.coerce.number().describe("The ID of the workout to schedule"),
         date: z.string().describe("Date to schedule in YYYY-MM-DD format"),
         time: z.string().optional().describe("Time to schedule in HH:MM format"),
       },
@@ -870,23 +1010,23 @@ Modes:
       inputSchema: {
         name: z.string().describe("Name of the workout"),
         description: z.string().optional().describe("Description of the workout"),
-        steps: z.array(z.object({
+        steps: jsonParsed(z.array(z.object({
           type: z.enum(["warmup", "cooldown", "steady", "ramp", "intervalst", "freeride"]),
-          duration: z.number().optional().describe("Duration in seconds"),
-          target: z.number().optional().describe("Target power as decimal of FTP (e.g., 0.88 = 88%)"),
-          start: z.number().optional().describe("Starting power for ramps"),
-          end: z.number().optional().describe("Ending power for ramps"),
-          cadence: z.number().optional().describe("Target cadence RPM"),
-          repeat: z.number().optional().describe("Number of repeats for intervals"),
-          onDuration: z.number().optional().describe("On/work duration for intervals"),
-          offDuration: z.number().optional().describe("Off/rest duration for intervals"),
-          onPower: z.number().optional().describe("Work power for intervals"),
-          offPower: z.number().optional().describe("Rest power for intervals"),
-        })).describe("Array of workout steps/segments"),
-        textEvents: z.array(z.object({
-          timeOffset: z.number().describe("Time offset in seconds from workout start"),
+          duration: z.coerce.number().optional().describe("Duration in seconds"),
+          target: z.coerce.number().optional().describe("Target power as decimal of FTP (e.g., 0.88 = 88%)"),
+          start: z.coerce.number().optional().describe("Starting power for ramps"),
+          end: z.coerce.number().optional().describe("Ending power for ramps"),
+          cadence: z.coerce.number().optional().describe("Target cadence RPM"),
+          repeat: z.coerce.number().optional().describe("Number of repeats for intervals"),
+          onDuration: z.coerce.number().optional().describe("On/work duration for intervals"),
+          offDuration: z.coerce.number().optional().describe("Off/rest duration for intervals"),
+          onPower: z.coerce.number().optional().describe("Work power for intervals"),
+          offPower: z.coerce.number().optional().describe("Rest power for intervals"),
+        }))).describe("Array of workout steps/segments"),
+        textEvents: jsonParsed(z.array(z.object({
+          timeOffset: z.coerce.number().describe("Time offset in seconds from workout start"),
           message: z.string().describe("Message to display"),
-        })).optional().describe("Optional text messages to display during workout"),
+        }))).optional().describe("Optional text messages to display during workout"),
       },
     },
     async ({ name, description, steps, textEvents }) => {
@@ -933,8 +1073,8 @@ Modes:
       inputSchema: {
         search: z.string().optional().describe("Full-text search query"),
         category: z.string().optional().describe("Filter by category name"),
-        limit: z.number().optional().default(20).describe("Max results to return (default 20)"),
-        page: z.number().optional().default(0).describe("Page number for pagination (default 0)"),
+        limit: z.coerce.number().optional().default(20).describe("Max results to return (default 20)"),
+        page: z.coerce.number().optional().default(0).describe("Page number for pagination (default 0)"),
       },
     },
     async ({ search, category, limit, page }) =>
@@ -958,20 +1098,20 @@ Modes:
       description: "Save a new recipe. Ingredients and categories can be simple string arrays; the API normalizes them.",
       inputSchema: {
         title: z.string().describe("Recipe title"),
-        ingredients: z.array(z.string()).optional().describe("List of ingredient strings, e.g. '2 cups flour'"),
+        ingredients: jsonParsed(z.array(z.string())).optional().describe("List of ingredient strings, e.g. '2 cups flour'"),
         instructions: z.string().optional().describe("Cooking instructions (plain text or HTML)"),
-        categories: z.array(z.string()).optional().describe("Category names, e.g. ['Dinner', 'Italian']"),
-        sources: z.array(z.string()).optional().describe("Source URLs or names"),
-        rating: z.number().min(0).max(5).optional().describe("Rating 0–5"),
-        yields: z.array(z.object({
-          amount: z.number(),
+        categories: jsonParsed(z.array(z.string())).optional().describe("Category names, e.g. ['Dinner', 'Italian']"),
+        sources: jsonParsed(z.array(z.string())).optional().describe("Source URLs or names"),
+        rating: z.coerce.number().min(0).max(5).optional().describe("Rating 0–5"),
+        yields: jsonParsed(z.array(z.object({
+          amount: z.coerce.number(),
           unit: z.string(),
-        })).optional().describe("Yield info, e.g. [{amount: 4, unit: 'servings'}]"),
-        times: z.array(z.object({
+        }))).optional().describe("Yield info, e.g. [{amount: 4, unit: 'servings'}]"),
+        times: jsonParsed(z.array(z.object({
           name: z.string().describe("e.g. 'Prep', 'Cook', 'Total'"),
-          seconds: z.number().optional(),
+          seconds: z.coerce.number().optional(),
           text: z.string().optional().describe("Human-readable time, e.g. '30 minutes'"),
-        })).optional().describe("Time info"),
+        }))).optional().describe("Time info"),
       },
     },
     async ({ title, ingredients, instructions, categories, sources, rating, yields, times }) => {
@@ -994,17 +1134,17 @@ Modes:
       inputSchema: {
         id: z.string().describe("The recipe _id to update"),
         title: z.string().optional(),
-        ingredients: z.array(z.string()).optional().describe("Replaces the ingredient list"),
+        ingredients: jsonParsed(z.array(z.string())).optional().describe("Replaces the ingredient list"),
         instructions: z.string().optional().describe("Replaces the instructions"),
-        categories: z.array(z.string()).optional().describe("Replaces the category list"),
-        sources: z.array(z.string()).optional(),
-        rating: z.number().min(0).max(5).optional(),
-        yields: z.array(z.object({ amount: z.number(), unit: z.string() })).optional(),
-        times: z.array(z.object({
+        categories: jsonParsed(z.array(z.string())).optional().describe("Replaces the category list"),
+        sources: jsonParsed(z.array(z.string())).optional(),
+        rating: z.coerce.number().min(0).max(5).optional(),
+        yields: jsonParsed(z.array(z.object({ amount: z.coerce.number(), unit: z.string() }))).optional(),
+        times: jsonParsed(z.array(z.object({
           name: z.string(),
-          seconds: z.number().optional(),
+          seconds: z.coerce.number().optional(),
           text: z.string().optional(),
-        })).optional(),
+        }))).optional(),
       },
     },
     async ({ id, ...fields }) => {
@@ -1037,7 +1177,7 @@ Modes:
       description: "Look up nutritional data for a food in the USDA FoodData Central database. Returns macros per 100g. ONLY use this when: (1) the user questions or wants to verify nutrition numbers, (2) you are genuinely uncertain about a food's macros, or (3) the food is unusual/obscure. Do NOT call this before every log entry — use your own knowledge for common foods (pasta, chicken, rice, eggs, bread, etc.) and only hit this endpoint to fact-check or resolve uncertainty. Note: covers generic/whole foods and some branded packaged items; restaurant dishes and custom meals won't be found.",
       inputSchema: {
         query: z.string().describe("Food name or description to search for"),
-        limit: z.number().optional().default(5).describe("Number of results to return (default 5, max 25)"),
+        limit: z.coerce.number().optional().default(5).describe("Number of results to return (default 5, max 25)"),
         dataType: z.enum(["Foundation+SR Legacy", "Foundation", "SR Legacy", "Survey", "Branded", "All"]).optional().default("Foundation+SR Legacy").describe("Data source(s): 'Foundation+SR Legacy' = both standard reference databases (default, best for generic foods), 'Branded' = commercial packaged products, 'Survey' = FNDDS dietary survey foods, 'All' = everything."),
       },
     },
