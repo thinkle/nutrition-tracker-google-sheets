@@ -16,6 +16,7 @@ node_modules/
 # Backup / scratch files
 *.backup
 *.__backup_*
+*.tmp
 
 # Stray local data files (not project source)
 lastWorkoutBeforeBreak.json
