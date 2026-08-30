@@ -125,6 +125,10 @@ function internalDoGet(e) {
       return handleGetGoals(ss, e);
     } else if (path === 'goals/history') {
       return handleGetGoalHistory(ss, e);
+    } else if (path === 'calibration') {
+      return handleGetCalibration(e, ss);
+    } else if (path === 'calibration/history') {
+      return sendJsonResponse(paginateArray(cal_history_(ss), e));
     } else if (path === 'strength/workouts') {
       return sendJsonResponse(paginateArray(handleGetStrengthWorkouts(e), e));
     } else if (path === 'strength/sets/filter') {
@@ -304,6 +308,32 @@ function handleGetLogs(e, ss) {
     return sendJsonResponse(paginateArray(sortByDateDesc(filtered), e));
   }
   return sendJsonResponse(paginateArray(sortByDateDesc(logs), e));
+}
+
+/**
+ * GET /calibration — current maintenance/TDEE estimate for agents.
+ *
+ * Serves the last cached row by default so the response is fast and stable.
+ * ?fresh=true recomputes from the sheets and caches the result. If nothing is
+ * cached yet, computes once so the first caller still gets an answer.
+ */
+function handleGetCalibration(e, ss) {
+  const fresh = String(e.parameter.fresh || '').toLowerCase() === 'true';
+  if (!fresh) {
+    const cached = cal_latest_(ss);
+    if (cached) {
+      cached.source = 'cache';
+      cached.note = 'Cached weekly. Pass ?fresh=true to recompute now.';
+      return sendJsonResponse(cached);
+    }
+  }
+  const cal = cal_compute_(ss, Session.getScriptTimeZone());
+  if (!cal || cal.error) {
+    return sendJsonResponse({ error: (cal && cal.error) || 'Calibration failed' }, 500);
+  }
+  cal_appendRow_(ss, cal);
+  cal.source = 'fresh';
+  return sendJsonResponse(cal);
 }
 
 function handleGetSummaries(ss, e) {

@@ -680,6 +680,79 @@ function getOpenApiSpec() {
       "/settings": {
         ...settingsDocs
       },
+      "/calibration": {
+        get: {
+          operationId: "calibration",
+          summary: "Current maintenance / TDEE estimate",
+          description:
+            "Energy-balance estimate of maintenance calories over a trailing window, cached weekly. " +
+            "maintenanceGross is GROSS kcal and already includes exercise; maintenanceEffective is " +
+            "gross - dTarget*burn, matching the Summary 'Effective kcal' column. The two differ by " +
+            "several hundred kcal/day, so check which one you are quoting. " +
+            "maintenanceGrossSE is the standard error: a single window is uncertain to roughly " +
+            "+/-400 kcal/day, so do not treat one reading as a precise target. " +
+            "targetAtGoalRate.effectivePerDay is a REST-DAY figure; on a training day add " +
+            "dTarget * that day's burn.",
+          parameters: [
+            {
+              name: "fresh",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", default: false },
+              description: "Recompute from the sheets instead of serving the weekly cache."
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Current calibration.",
+              content: { "application/json": { schema: { type: "object" } } }
+            }
+          }
+        }
+      },
+      "/calibration/history": {
+        get: {
+          operationId: "calibrationHistory",
+          summary: "Past calibrations, newest first",
+          description:
+            "One row per weekly calibration, so you can see how maintenance and the weight trend " +
+            "have drifted over time. Paginated (limit/offset).",
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip (default 0)."
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Calibration history.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: { type: "array", items: { type: "object" } },
+                      total: { type: "integer" },
+                      limit: { type: "integer" },
+                      offset: { type: "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "/summaries": {
         get: {
           operationId: "summaries",

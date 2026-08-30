@@ -24,6 +24,8 @@ function onOpen() {
         .addItem('Run Phase Analysis', 'runPhaseAnalysis')
         .addItem('Run Discount Sweep', 'runDiscountSweep')
         .addItem('Compute Target…', 'computeTarget')
+        .addItem('Recalibrate Now', 'runCalibrationNow')
+        .addItem('Install Weekly Calibration Trigger', 'installCalibrationTrigger')
         .addSeparator()
         .addItem('Build Trend Chart…', 'buildTrendChartPrompt')
         .addItem('Rebuild Trend Chart', 'buildTrendChart')

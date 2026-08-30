@@ -236,14 +236,28 @@ function computeTarget() {
  * Weight: averages duplicate weigh-ins per day, then interpolates gaps ≤ 6 days.
  * Nutrition: only days with gross > 0 (actually logged food) are populated.
  */
+/**
+ * Report a problem to the user when a UI exists, otherwise log it.
+ *
+ * pa_readDailySeries_ runs from three contexts: the spreadsheet menu (UI
+ * available), a time-driven trigger, and the /calibration web endpoint.
+ * SpreadsheetApp.getUi() throws in the latter two, so guard it.
+ */
+function pa_notify_(msg) {
+  try {
+    SpreadsheetApp.getUi().alert(msg);
+  } catch (e) {
+    console.warn('[PhaseAnalysis] ' + msg);
+  }
+}
+
 function pa_readDailySeries_(ss, tz) {
-  const ui = SpreadsheetApp.getUi();
 
   // ── Weight ──────────────────────────────────────────────────────────────────
   const mSheet = ss.getSheetByName('Metrics');
-  if (!mSheet) { ui.alert('Metrics sheet not found.'); return null; }
+  if (!mSheet) { pa_notify_('Metrics sheet not found.'); return null; }
   const mData = mSheet.getDataRange().getValues();
-  if (mData.length < 2) { ui.alert('Metrics sheet has no data.'); return null; }
+  if (mData.length < 2) { pa_notify_('Metrics sheet has no data.'); return null; }
 
   const weightMap = {}; // date → [weights]
   for (let r = 1; r < mData.length; r++) {
@@ -256,9 +270,9 @@ function pa_readDailySeries_(ss, tz) {
 
   // ── Nutrition (Summary) ─────────────────────────────────────────────────────
   const sSheet = ss.getSheetByName('Summary');
-  if (!sSheet) { ui.alert('Summary sheet not found. Run "Reset Summary Formulas for Activities" first.'); return null; }
+  if (!sSheet) { pa_notify_('Summary sheet not found. Run "Reset Summary Formulas for Activities" first.'); return null; }
   const sData = sSheet.getDataRange().getValues();
-  if (sData.length < 2) { ui.alert('Summary sheet has no data.'); return null; }
+  if (sData.length < 2) { pa_notify_('Summary sheet has no data.'); return null; }
 
   const sHeaders = sData[0].map(h => String(h).trim());
   const sCol = {
@@ -275,7 +289,7 @@ function pa_readDailySeries_(ss, tz) {
 
   const missing = Object.entries(sCol).filter(([, i]) => i === -1).map(([n]) => n);
   if (missing.length) {
-    ui.alert('Summary sheet is missing columns: ' + missing.join(', ') + '.\nRun "Reset Summary Formulas for Activities" to rebuild it.');
+    pa_notify_('Summary sheet is missing columns: ' + missing.join(', ') + '.\nRun "Reset Summary Formulas for Activities" to rebuild it.');
     return null;
   }
 
@@ -299,7 +313,7 @@ function pa_readDailySeries_(ss, tz) {
 
   // ── Build continuous daily index ────────────────────────────────────────────
   const allDateKeys = [...new Set([...Object.keys(weightMap), ...Object.keys(summaryMap)])].sort();
-  if (allDateKeys.length === 0) { ui.alert('No data found in Metrics or Summary sheets.'); return null; }
+  if (allDateKeys.length === 0) { pa_notify_('No data found in Metrics or Summary sheets.'); return null; }
 
   // Use noon UTC to avoid DST edge cases when stepping by 86400 s
   const startMs = new Date(allDateKeys[0] + 'T12:00:00Z').getTime();

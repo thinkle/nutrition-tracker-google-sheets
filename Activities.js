@@ -55,7 +55,10 @@ function setupNutritionSettingsSheet() {
     ['activity_credit_mode', 'percent_total', 'percent_total, carb_only, or none'],
     ['activity_credit_rate', 0.5, 'Fraction of TotalKcal credited when activity_credit_mode is percent_total'],
     ['carb_kcal_per_gram', 3.75, 'Kcal per carb gram used for carb-only adjusted calorie math'],
-    ['target_loss_rate_lb_per_week', 0.5, 'Default target loss rate for later phase analysis']
+    ['target_loss_rate_lb_per_week', 0.5, 'Default target loss rate for later phase analysis'],
+    ['dob', '', 'Date of birth YYYY-MM-DD. Stored as a birth date, not an age, so the BMR anchor in Calibration.js stays correct as you age.'],
+    ['height_cm', '', 'Height in centimetres. Used with dob for the Mifflin-St Jeor BMR anchor.'],
+    ['biological_sex', '', 'male or female. Only used for the BMR constant (differs by 166 kcal); blank defaults to male.']
   ];
   const existing = getSettingsKeySet_(sh);
   const now = new Date().toISOString();
