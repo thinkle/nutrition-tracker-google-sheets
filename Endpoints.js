@@ -18,6 +18,21 @@ function sendJsonResponse(obj, status = 200) {
 }
 
 /**
+ * Sort rows newest-first by their Date column.
+ *
+ * Sheet order is insertion order, so backfilled rows land out of sequence.
+ * Without this, offset paging over "recent" rows returns an arbitrary slice
+ * rather than the most recent days.
+ */
+function sortByDateDesc(array) {
+  return array.slice().sort(function (a, b) {
+    const da = formatAsDateString(a.Date);
+    const db = formatAsDateString(b.Date);
+    return da < db ? 1 : da > db ? -1 : 0;
+  });
+}
+
+/**
  * Generic pagination helper for array responses
  */
 function paginateArray(array, e) {
@@ -95,7 +110,7 @@ function internalDoGet(e) {
 
   try {
     if (path === 'summaries') {
-      return handleGetSummaries(ss);
+      return handleGetSummaries(ss, e);
     } else if (path === 'todays_summary' || path === 'today') {
       return handleGetTodaySummary(ss);
     } else if (path === 'logs' || path === 'log') {
@@ -107,9 +122,9 @@ function internalDoGet(e) {
     } else if (path === 'metrics') {
       return handleGetMetrics(e, ss);
     } else if (path === 'goals') {
-      return handleGetGoals(ss);
+      return handleGetGoals(ss, e);
     } else if (path === 'goals/history') {
-      return handleGetGoalHistory(ss);
+      return handleGetGoalHistory(ss, e);
     } else if (path === 'strength/workouts') {
       return sendJsonResponse(paginateArray(handleGetStrengthWorkouts(e), e));
     } else if (path === 'strength/sets/filter') {
@@ -270,6 +285,8 @@ function handleGetLogs(e, ss) {
   const logSheet = ss.getSheetByName('Log');
   const id = e.parameter.id;
   const dateParam = e.parameter.date;
+  const startDate = e.parameter.start_date;
+  const endDate = e.parameter.end_date;
   const logs = readLogs(logSheet);
 
   if (id) {
@@ -277,11 +294,16 @@ function handleGetLogs(e, ss) {
     return log ? sendJsonResponse(log) : sendJsonResponse({ error: 'Not found', id }, 404);
   } else if (dateParam) {
     console.log('Filtering logs for date: ', dateParam);
-    console.log('Dates we have are: ', logs.map((l) => formatAsDateString(l.Date)));
     const filtered = logs.filter(l => formatAsDateString(l.Date) === dateParam);
     return sendJsonResponse(paginateArray(filtered, e));
+  } else if (startDate || endDate) {
+    const filtered = logs.filter(l => {
+      const d = formatAsDateString(l.Date);
+      return (!startDate || d >= startDate) && (!endDate || d <= endDate);
+    });
+    return sendJsonResponse(paginateArray(sortByDateDesc(filtered), e));
   }
-  return sendJsonResponse(paginateArray(logs, e));
+  return sendJsonResponse(paginateArray(sortByDateDesc(logs), e));
 }
 
 function handleGetSummaries(ss, e) {

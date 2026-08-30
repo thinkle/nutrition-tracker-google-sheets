@@ -192,19 +192,48 @@ function buildServer(env) {
   server.registerTool(
     "get_recent_logs",
     {
-      description: "Get recent food log entries, optionally filtered by date",
-      inputSchema: { date: z.string().optional().describe("Filter by date in YYYY-MM-DD format") },
+      description:
+        "Get food log entries, newest-first. There are thousands of rows, so responses are paginated: " +
+        "the reply includes `total`, `limit`, and `offset` — check `total` and page with `offset` when you need more than one page. " +
+        "For analysis over a period, use start_date/end_date rather than paging blindly.",
+      inputSchema: {
+        date: z.string().optional().describe("Single date in YYYY-MM-DD format"),
+        start_date: z.string().optional().describe("Range start (inclusive) in YYYY-MM-DD format"),
+        end_date: z.string().optional().describe("Range end (inclusive) in YYYY-MM-DD format"),
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
+      },
     },
-    async ({ date }) => ok(await nutritionRequest(date ? `/logs?date=${date}` : "/logs"))
+    async ({ date, start_date, end_date, limit, offset }) => {
+      const p = new URLSearchParams();
+      if (date) p.set("date", date);
+      if (start_date) p.set("start_date", start_date);
+      if (end_date) p.set("end_date", end_date);
+      if (limit !== undefined) p.set("limit", String(limit));
+      if (offset !== undefined) p.set("offset", String(offset));
+      const qs = p.toString();
+      return ok(await nutritionRequest(`/logs${qs ? "?" + qs : ""}`));
+    }
   );
 
   server.registerTool(
     "get_summaries",
     {
-      description: "Get nutrition summaries over time",
-      inputSchema: { limit: z.coerce.number().optional().describe("Maximum number of summaries to return") },
+      description:
+        "Get per-day nutrition summaries, newest-first. Paginated: the reply includes `total`, `limit`, and `offset` — " +
+        "page with `offset` when you need history beyond the first page.",
+      inputSchema: {
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
+      },
     },
-    async ({ limit }) => ok(await nutritionRequest(limit ? `/summaries?limit=${limit}` : "/summaries"))
+    async ({ limit, offset }) => {
+      const p = new URLSearchParams();
+      if (limit !== undefined) p.set("limit", String(limit));
+      if (offset !== undefined) p.set("offset", String(offset));
+      const qs = p.toString();
+      return ok(await nutritionRequest(`/summaries${qs ? "?" + qs : ""}`));
+    }
   );
 
   server.registerTool(
@@ -228,13 +257,15 @@ function buildServer(env) {
         start_date: z.string().optional().describe("Start date in YYYY-MM-DD format (default: ~30 days ago)"),
         end_date: z.string().optional().describe("End date in YYYY-MM-DD format (default: today)"),
         limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
       },
     },
-    async ({ start_date, end_date, limit }) => {
+    async ({ start_date, end_date, limit, offset }) => {
       const p = new URLSearchParams();
       if (start_date) p.set("start_date", start_date);
       if (end_date) p.set("end_date", end_date);
       if (limit !== undefined) p.set("limit", String(limit));
+      if (offset !== undefined) p.set("offset", String(offset));
       const qs = p.toString();
       return ok(await nutritionRequest(`/metrics${qs ? "?" + qs : ""}`));
     }
@@ -256,8 +287,22 @@ function buildServer(env) {
 
   server.registerTool(
     "get_goal_history",
-    { description: "Get the history of past nutrition goal changes over time. Each row is a dated entry; blank fields were not touched by that entry." },
-    async () => ok(await nutritionRequest("/goals/history"))
+    {
+      description:
+        "Get the history of past nutrition goal changes over time. Each row is a dated entry; blank fields were not touched by that entry. " +
+        "Paginated: the reply includes `total`, `limit`, and `offset`.",
+      inputSchema: {
+        limit: z.coerce.number().optional().describe("Max items to return (default 50)"),
+        offset: z.coerce.number().optional().describe("Items to skip (default 0)"),
+      },
+    },
+    async ({ limit, offset }) => {
+      const p = new URLSearchParams();
+      if (limit !== undefined) p.set("limit", String(limit));
+      if (offset !== undefined) p.set("offset", String(offset));
+      const qs = p.toString();
+      return ok(await nutritionRequest(`/goals/history${qs ? "?" + qs : ""}`));
+    }
   );
 
   server.registerTool(

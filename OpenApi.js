@@ -48,7 +48,7 @@ function getOpenApiSpec() {
     get: {
       operationId: "logs",
       summary: "Fetch logs",
-      description: "Fetch log entries from the API. Use optional query parameters to filter by ID or date.",
+      description: "Fetch log entries from the API, newest-first. Use optional query parameters to filter by ID, a single date, or a date range. Results are paginated (see limit/offset).",
       parameters: [
         {
           name: "id",
@@ -63,6 +63,20 @@ function getOpenApiSpec() {
           required: false,
           schema: { type: "string", format: "date" },
           description: "Filter logs by this date in YYYY-MM-DD format."
+        },
+        {
+          name: "start_date",
+          in: "query",
+          required: false,
+          schema: { type: "string", format: "date" },
+          description: "Range start (inclusive) in YYYY-MM-DD format. Ignored if `date` is supplied."
+        },
+        {
+          name: "end_date",
+          in: "query",
+          required: false,
+          schema: { type: "string", format: "date" },
+          description: "Range end (inclusive) in YYYY-MM-DD format. Ignored if `date` is supplied."
         },
         {
           name: "limit",
