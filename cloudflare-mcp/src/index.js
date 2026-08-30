@@ -217,21 +217,23 @@ function buildServer(env) {
   );
 
   server.registerTool(
-    "get_calibration",
+    "get_computed_calorie_target",
     {
       description:
-        "Current maintenance / TDEE estimate and the daily calorie target implied by it, computed " +
-        "from a trailing 56-day window of logged intake and weight trend. Use this whenever the " +
-        "question is about maintenance calories, TDEE, whether a calorie goal still makes sense, " +
-        "or how fast weight is actually moving right now -- it is already computed server-side, so " +
-        "do not re-derive it from raw logs.\n\n" +
-        "Returns BOTH maintenanceGross (includes exercise) and maintenanceEffective (gross minus " +
-        "the exercise discount, matching the tracker's 'Effective kcal' column). These differ by " +
-        "several hundred kcal/day -- always state which you mean. targetAtGoalRate.effectivePerDay " +
-        "is a REST-DAY figure; on a training day add dTarget * that day's burn.\n\n" +
-        "maintenanceGrossSE is the within-window standard error; historicalSpread (once several " +
-        "calibrations exist) is the wider, more honest uncertainty. A single reading should not " +
-        "move a goal on its own.",
+        "Your calorie target COMPUTED FROM YOUR OWN DATA: what the last 56 days of logged intake " +
+        "and actual weight change say your maintenance calories really are, plus the daily target " +
+        "that implies for your goal rate. Contrast with get_goals, which returns the target you " +
+        "have STATED. Comparing the two is how you tell whether a stated goal is still realistic.\n\n" +
+        "Use this for: how much should I eat, is my calorie target still right, what is my TDEE or " +
+        "maintenance, am I actually in a deficit, energy balance, weekly average intake versus " +
+        "target, why has my weight stalled or plateaued, how fast am I really losing. It is already " +
+        "computed server-side from the full history -- do not re-derive it by averaging raw logs.\n\n" +
+        "Returns BOTH maintenanceGross (includes exercise) and maintenanceEffective (gross minus the " +
+        "exercise discount, matching the tracker's 'Effective kcal' column). These differ by several " +
+        "hundred kcal/day, so always say which you mean. targetAtGoalRate.effectivePerDay is a " +
+        "REST-DAY figure; on a training day add dTarget * that day's burn.\n\n" +
+        "maintenanceGrossSE is the within-window standard error; historicalSpread is the wider and " +
+        "more honest uncertainty. One reading should not move a goal on its own.",
       inputSchema: {
         fresh: z.coerce.boolean().optional()
           .describe("Recompute now instead of serving the weekly cache. Slower; usually unnecessary."),
@@ -242,21 +244,24 @@ function buildServer(env) {
   );
 
   server.registerTool(
-    "get_phases",
+    "get_weight_trend_history",
     {
       description:
-        "Weight history segmented into loss/gain phases, with maintenance derived from them. " +
-        "Answers 'what happened over my history' -- for 'what is true now' use get_calibration.\n\n" +
-        "Phase boundaries are a function of the detection settings, not facts. smoothDays dominates: " +
-        "a centred average of N days erases swings shorter than about N before detection runs, so " +
-        "lower it before lowering thresh. Re-run at two or three settings before treating a phase " +
-        "as real.\n\n" +
+        "Weight history over time, segmented into loss / gain runs, with the average intake and " +
+        "exercise burn during each. Answers 'what has happened over months' -- for the current " +
+        "number use get_computed_calorie_target instead.\n\n" +
+        "Use this for: am I still losing, when did progress stall, how fast was I losing before, " +
+        "plateau or regain periods, long-term trend, what changed between periods.\n\n" +
+        "Segment boundaries are a function of the detection settings, not facts. smoothDays " +
+        "dominates: a centred average of N days erases swings shorter than about N before " +
+        "detection runs, so lower it before lowering thresh. Re-run at two or three settings " +
+        "before treating a segment as real.\n\n" +
         "The response includes a `guidance` array of interpretation caveats. Read it before drawing " +
         "conclusions -- in particular, kPerLb (how maintenance scales with body weight) CANNOT be " +
         "fitted from this data and attempting it yields a physiologically impossible negative value.",
       inputSchema: {
-        thresh: z.coerce.number().optional().describe("Reversal in lb before a turn counts (default 2.0). Lower = more phases."),
-        minWeeks: z.coerce.number().optional().describe("Discard phases shorter than this (default 2)."),
+        thresh: z.coerce.number().optional().describe("Reversal in lb before a turn counts (default 2.0). Lower = more segments."),
+        minWeeks: z.coerce.number().optional().describe("Discard segments shorter than this (default 2)."),
         smoothDays: z.coerce.number().optional().describe("Centred smoothing window before detection (default 28). The dominant knob."),
         dMeasure: z.coerce.number().optional().describe("Analysis exercise discount. Defaults to the stored setting."),
         dTarget: z.coerce.number().optional().describe("Target exercise discount. Defaults to the stored setting."),
@@ -367,7 +372,7 @@ function buildServer(env) {
     "get_goals",
     {
       description:
-        "Get the user's current nutrition goals. Call this at the start of any nutrition session so you can compare intake against targets.\n\n" +
+        "Get the user's STATED nutrition goals -- the targets they have set for themselves. Call this at the start of any nutrition session so you can compare intake against targets. For what their data says the target SHOULD be, use get_computed_calorie_target and compare the two.\n\n" +
         "How goals work: each goal field is tracked independently, and each entry is dated. This endpoint returns the MOST RECENT value for each field. " +
         "Numeric fields (kcal, protein, fat, carbs, fiber, added_sugar, alcohol) are daily gram/calorie targets. " +
         "NutritionGoal, WeightGoal, and OtherGoal are free-text — use them for qualitative or computed goals that don't reduce to a single daily number " +
