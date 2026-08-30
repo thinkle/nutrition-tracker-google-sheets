@@ -56,6 +56,7 @@ function setupNutritionSettingsSheet() {
     ['activity_credit_rate', 0.5, 'Fraction of TotalKcal credited when activity_credit_mode is percent_total'],
     ['carb_kcal_per_gram', 3.75, 'Kcal per carb gram used for carb-only adjusted calorie math'],
     ['target_loss_rate_lb_per_week', 0.5, 'Default target loss rate for later phase analysis'],
+    ['analysis_discount_rate', '', 'Optional override for the ANALYSIS exercise discount. Leave blank: it then follows activity_credit_rate, which is almost always what you want. Set it only to deliberately analyse at a different discount than you eat at.'],
     ['dob', '', 'Date of birth YYYY-MM-DD. Stored as a birth date, not an age, so the BMR anchor in Calibration.js stays correct as you age.'],
     ['height_cm', '', 'Height in centimetres. Used with dob for the Mifflin-St Jeor BMR anchor.'],
     ['biological_sex', '', 'male or female. Only used for the BMR constant (differs by 166 kcal); blank defaults to male.']

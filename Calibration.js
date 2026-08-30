@@ -119,8 +119,8 @@ function cal_compute_(ss, tz) {
   if (!series) return { error: 'Could not read Metrics/Summary series' };
 
   const settings = pa_readSettings_(ss);
-  const rate = parseFloat(settings['activity_credit_rate']);
-  const dTarget = isFinite(rate) ? rate : PA_D_TARGET;
+  const discounts = pa_resolveDiscounts_(settings);
+  const dTarget = discounts.dTarget;
 
   const n = series.dates.length;
   const start = Math.max(0, n - CAL_WINDOW_DAYS);
@@ -176,7 +176,8 @@ function cal_compute_(ss, tz) {
     },
     weightNow: weightNow,
     dTarget: dTarget,
-    dMeasure: PA_D_MEASURE,
+    dMeasure: discounts.dMeasure,
+    dMeasureSource: discounts.dMeasureSource,
     maintenanceGross: maintenanceGross,
     maintenanceGrossSE: maintenanceGrossSE,
     maintenanceGrossSENaive: 3500 * fit.slopeSENaive,

@@ -41,16 +41,21 @@ const PA_MIN_WEEKS = 2;
 const PA_MIN_GROSS_KCAL = 500;
 
 /**
- * D_MEASURE: discount used in phase stats and maintenance fitting.
- * Start at 1.0 (full credit); run the Discount Sweep to find a better estimate
- * and update this constant, then re-run Phase Analysis and Compute Target.
+ * D_MEASURE fallback, used only when Settings has neither
+ * analysis_discount_rate nor activity_credit_rate. See pa_resolveDiscounts_:
+ * the live value normally comes from Settings and equals D_TARGET.
+ *
+ * Do not tune this constant. It was 1.0 for a long time while the fitted
+ * value was nearer 0.65, because changing it meant a code edit and a
+ * redeploy, so it silently went stale. That is the reason it now lives in
+ * Settings instead.
  */
 const PA_D_MEASURE = 1.0;
 
 /**
- * D_TARGET: discount for daily eating targets.
- * Deliberately conservative (< D_MEASURE) to bank a safety margin.
- * Update after reviewing the sweep; do not auto-set to d*.
+ * D_TARGET fallback, used only when Settings has no activity_credit_rate.
+ * The live value comes from Settings; see pa_resolveDiscounts_ for why this
+ * now defaults to the same number as D_MEASURE rather than sitting below it.
  */
 const PA_D_TARGET = 0.5;
 
@@ -76,15 +81,15 @@ function runPhaseAnalysis() {
   const series = pa_readDailySeries_(ss, tz);
   if (!series) return;
 
-  // Read D_TARGET from Settings (activity_credit_rate) so the phase table shows
-  // effective intake at both D_MEASURE (for analysis) and D_TARGET (for daily goals).
+  // Both discounts come from Settings and default to the same value.
   const settings = pa_readSettings_(ss);
-  const settingsRate = parseFloat(settings['activity_credit_rate']);
-  const dTarget = isFinite(settingsRate) ? settingsRate : PA_D_TARGET;
+  const d = pa_resolveDiscounts_(settings);
+  const dTarget = d.dTarget;
+  const dMeasure = d.dMeasure;
 
   const smoothed = pa_smoothWeights_(series.weights);
   const pivotIdxs = pa_zigzagPivots_(smoothed, PA_THRESH);
-  const phases = pa_buildPhases_(series, smoothed, pivotIdxs, PA_D_MEASURE, PA_MIN_WEEKS);
+  const phases = pa_buildPhases_(series, smoothed, pivotIdxs, dMeasure, PA_MIN_WEEKS);
 
   if (phases.length === 0) {
     SpreadsheetApp.getUi().alert(
@@ -98,18 +103,18 @@ function runPhaseAnalysis() {
   }
 
   // Derive maintenance from phases (rate=0 → maintenance intake).
-  const maintCalc = pa_computeTargetCalcs_(phases, series, PA_D_MEASURE, dTarget, PA_K_PER_LB, 0);
+  const maintCalc = pa_computeTargetCalcs_(phases, series, dMeasure, dTarget, PA_K_PER_LB, 0);
 
   // Trailing 21-day average intake vs maintenance estimate.
-  const trailing = pa_trailingEstimate_(series, maintCalc, 21, PA_D_MEASURE);
+  const trailing = pa_trailingEstimate_(series, maintCalc, 21, dMeasure);
 
-  pa_writePhaseSheet_(ss, phases, maintCalc, trailing, PA_D_MEASURE, dTarget);
+  pa_writePhaseSheet_(ss, phases, maintCalc, trailing, dMeasure, dTarget);
 
   SpreadsheetApp.getUi().alert(
     'Phase Analysis complete: ' + phases.length + ' phases written to "' + PA_SHEET_PHASE + '".\n\n' +
     'Effective kcal maintenance (d=' + dTarget + '): ' + Math.round(maintCalc.maintenanceWeightedNow) + '/day at ' + pa_round_(maintCalc.wNow, 1) + ' lb\n' +
     '  → Keep Summary "Effective kcal" at this level to hold weight.\n\n' +
-    'Net kcal maintenance (d=' + PA_D_MEASURE + '): ' + Math.round(maintCalc.maintenanceNow) + '/day\n' +
+    'Net kcal maintenance (d=' + dMeasure + '): ' + Math.round(maintCalc.maintenanceNow) + '/day\n' +
     '  → Analysis number; matches Discount Sweep calibration.\n\n' +
     'Next: run "Discount Sweep" to calibrate D_MEASURE, then "Compute Target…" for a daily goal.'
   );
@@ -167,7 +172,7 @@ function computeTarget() {
   const resp2 = ui.prompt(
     'Compute Calorie Target (2/2)',
     'Enter D_TARGET: the exercise discount for your eating goal.\n' +
-    'This should be ≤ D_MEASURE (' + PA_D_MEASURE + ').\n\n' +
+    'Normally the same as the analysis discount (' + defaultDTarget + ').\n\n' +
     'Examples:\n' +
     '  0.5 = eat back 50% of logged burn (conservative, recommended)\n' +
     '  0.7 = eat back 70%\n' +
@@ -203,9 +208,10 @@ function computeTarget() {
   const series = pa_readDailySeries_(ss, tz);
   if (!series) return;
 
+  const sweepD = pa_resolveDiscounts_(pa_readSettings_(ss));
   const smoothed = pa_smoothWeights_(series.weights);
   const pivotIdxs = pa_zigzagPivots_(smoothed, PA_THRESH);
-  const phases = pa_buildPhases_(series, smoothed, pivotIdxs, PA_D_MEASURE, PA_MIN_WEEKS);
+  const phases = pa_buildPhases_(series, smoothed, pivotIdxs, sweepD.dMeasure, PA_MIN_WEEKS);
 
   if (phases.length < 2) {
     ui.alert(
@@ -215,7 +221,7 @@ function computeTarget() {
     return;
   }
 
-  const calc = pa_computeTargetCalcs_(phases, series, PA_D_MEASURE, dTarget, PA_K_PER_LB, desiredRate);
+  const calc = pa_computeTargetCalcs_(phases, series, sweepD.dMeasure, dTarget, PA_K_PER_LB, desiredRate);
   pa_writeTargetBlock_(ss, calc);
 
   ui.alert(
@@ -237,6 +243,50 @@ function computeTarget() {
  * Nutrition: only days with gross > 0 (actually logged food) are populated.
  */
 /**
+ * Resolve the two exercise discounts from Settings.
+ *
+ * dTarget  — how much logged burn you allow yourself to eat back.
+ * dMeasure — the discount used for analysis units.
+ *
+ * These default to the SAME value, because the reason the original design
+ * separated them does not hold. D_TARGET was meant to sit below D_MEASURE to
+ * "bank a safety margin" against inflated device burns and compensatory
+ * eating -- but D_MEASURE is fitted to observed weight change, so it already
+ * absorbs both. Discounting again is a second margin on an already-realistic
+ * number, and it makes the resulting target uninterpretable: you cannot tell
+ * whether it reflects maintenance or maintenance minus an unstated fudge.
+ * Conservatism belongs in the goal RATE, where it is visible.
+ *
+ * Set analysis_discount_rate in Settings only to deliberately decouple them;
+ * leave it blank for the normal case. Callers may override per-request (see
+ * /phases) so an agent can explore alternatives without changing your config.
+ *
+ * Precedence: explicit override > analysis_discount_rate > activity_credit_rate > constant.
+ */
+function pa_resolveDiscounts_(settings, overrides) {
+  overrides = overrides || {};
+  const num = function (v) { const f = parseFloat(v); return isFinite(f) ? f : null; };
+
+  const credit   = num(settings['activity_credit_rate']);
+  const analysis = num(settings['analysis_discount_rate']);
+
+  const dTarget = num(overrides.dTarget) !== null ? num(overrides.dTarget)
+                : (credit !== null ? credit : PA_D_TARGET);
+
+  const dMeasure = num(overrides.dMeasure) !== null ? num(overrides.dMeasure)
+                 : (analysis !== null ? analysis
+                 : (credit !== null ? credit : PA_D_MEASURE));
+
+  return {
+    dTarget: dTarget,
+    dMeasure: dMeasure,
+    dMeasureSource: num(overrides.dMeasure) !== null ? 'request'
+                  : (analysis !== null ? 'settings.analysis_discount_rate'
+                  : (credit !== null ? 'settings.activity_credit_rate' : 'PA_D_MEASURE constant')),
+  };
+}
+
+/**
  * Headless phase analysis for the API.
  *
  * Same pipeline as runPhaseAnalysis, but returns data instead of writing
@@ -255,8 +305,9 @@ function pa_analyzeHeadless_(ss, tz, opts) {
   const thresh     = num(opts.thresh,     PA_THRESH);
   const minWeeks   = num(opts.minWeeks,   PA_MIN_WEEKS);
   const smoothDays = num(opts.smoothDays, 28);
-  const dMeasure   = num(opts.dMeasure,   PA_D_MEASURE);
-  const dTarget    = num(opts.dTarget,    isFinite(settingRate) ? settingRate : PA_D_TARGET);
+  const resolved   = pa_resolveDiscounts_(settings, { dMeasure: opts.dMeasure, dTarget: opts.dTarget });
+  const dMeasure   = resolved.dMeasure;
+  const dTarget    = resolved.dTarget;
   const kPerLb     = num(opts.kPerLb,     PA_K_PER_LB);
   const desiredRate = num(opts.desiredRate, 0);
 
@@ -283,7 +334,8 @@ function pa_analyzeHeadless_(ss, tz, opts) {
   return {
     params: {
       thresh: thresh, minWeeks: minWeeks, smoothDays: smoothDays,
-      dMeasure: dMeasure, dTarget: dTarget, kPerLb: kPerLb, desiredRate: desiredRate,
+      dMeasure: dMeasure, dMeasureSource: resolved.dMeasureSource,
+      dTarget: dTarget, kPerLb: kPerLb, desiredRate: desiredRate,
     },
     phaseCount: phases.length,
     phases: phases.map(function (p) {
