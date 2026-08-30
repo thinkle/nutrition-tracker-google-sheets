@@ -179,6 +179,11 @@ function cal_compute_(ss, tz) {
     dMeasure: PA_D_MEASURE,
     maintenanceGross: maintenanceGross,
     maintenanceGrossSE: maintenanceGrossSE,
+    maintenanceGrossSENaive: 3500 * fit.slopeSENaive,
+    seNote: 'maintenanceGrossSE is adjusted for day-to-day weight autocorrelation ' +
+            '(rho=' + pa_round_(fit.residualAutocorr, 2) + ', inflation x' +
+            pa_round_(fit.seInflation, 2) + '). It is a WITHIN-window error and still ' +
+            'understates true uncertainty; see historicalSpread.',
     maintenanceEffective: maintenanceEffective,
     units: 'maintenanceGross includes exercise; maintenanceEffective = gross - dTarget*burn ' +
            'and is what the Summary "Effective kcal" column shows.',
@@ -197,12 +202,30 @@ function cal_compute_(ss, tz) {
     };
   }
 
+  out.historicalSpread = cal_historicalSpread_(ss);
   out.bmr = cal_bmrBlock_(settings, weightNow, avgBurn, maintenanceGross);
   out.drift = cal_drift_(ss, fit.slope * 7, goalRate);
   return out;
 }
 
-/** OLS slope with standard error. Returns null if x has no spread. */
+/**
+ * OLS slope with an autocorrelation-adjusted standard error.
+ *
+ * Daily weights are strongly autocorrelated -- water and glycogen swings
+ * persist for days -- so the textbook OLS standard error, which assumes
+ * independent observations, is far too small. On real data it understates the
+ * uncertainty by roughly a factor of 2-3, which would present a maintenance
+ * estimate as precise to +/-85 kcal/day when repeated windows actually
+ * disagree by several hundred.
+ *
+ * Correction: inflate by sqrt((1+rho)/(1-rho)) using the lag-1 residual
+ * autocorrelation, the standard AR(1) effective-sample-size adjustment.
+ *
+ * Even the adjusted figure is a WITHIN-window number. It says how well the
+ * trend is pinned down given this window's data; it cannot see regime change
+ * (a training block ending, logging habits shifting). Compare consecutive
+ * rows in /calibration/history for the honest spread.
+ */
 function cal_olsWithSE_(xs, ys) {
   const n = xs.length;
   const mx = xs.reduce(function (a, b) { return a + b; }, 0) / n;
@@ -212,9 +235,56 @@ function cal_olsWithSE_(xs, ys) {
   if (sxx <= 1e-9 || n < 3) return null;
   const slope = sxy / sxx;
   const intercept = my - slope * mx;
+
+  const resid = [];
+  for (let i = 0; i < n; i++) resid.push(ys[i] - (intercept + slope * xs[i]));
   let sse = 0;
-  for (let i = 0; i < n; i++) { const e = ys[i] - (intercept + slope * xs[i]); sse += e * e; }
-  return { slope: slope, intercept: intercept, slopeSE: Math.sqrt((sse / (n - 2)) / sxx) };
+  for (let i = 0; i < n; i++) sse += resid[i] * resid[i];
+  const naiveSE = Math.sqrt((sse / (n - 2)) / sxx);
+
+  // Lag-1 residual autocorrelation, over consecutive in-window observations.
+  let num = 0;
+  for (let i = 0; i + 1 < n; i++) num += resid[i] * resid[i + 1];
+  let rho = sse > 0 ? num / sse : 0;
+  if (!isFinite(rho) || rho < 0) rho = 0;
+  if (rho > 0.95) rho = 0.95;               // guard the variance blow-up
+  const inflation = Math.sqrt((1 + rho) / (1 - rho));
+
+  return {
+    slope: slope,
+    intercept: intercept,
+    slopeSE: naiveSE * inflation,
+    slopeSENaive: naiveSE,
+    residualAutocorr: rho,
+    seInflation: inflation,
+  };
+}
+
+/**
+ * Spread of recent cached maintenance estimates -- the empirical uncertainty,
+ * which includes regime change that a within-window SE cannot see. Returns
+ * null until enough calibrations have accumulated.
+ */
+function cal_historicalSpread_(ss) {
+  const rows = cal_history_(ss);
+  const vals = rows.slice(0, 12)
+    .map(function (r) { return parseFloat(r.maintenanceGross); })
+    .filter(function (v) { return isFinite(v); });
+  if (vals.length < 4) {
+    return { available: false, n: vals.length, note: 'Needs at least 4 cached calibrations.' };
+  }
+  const mean = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+  let ss2 = 0;
+  vals.forEach(function (v) { ss2 += (v - mean) * (v - mean); });
+  return {
+    available: true,
+    n: vals.length,
+    mean: mean,
+    sd: Math.sqrt(ss2 / (vals.length - 1)),
+    note: 'Standard deviation across recent calibrations. Wider than maintenanceGrossSE ' +
+          'because it includes real change in training and logging, not just estimation error. ' +
+          'This is the number to trust when deciding how much a single reading should move a goal.',
+  };
 }
 
 /**
