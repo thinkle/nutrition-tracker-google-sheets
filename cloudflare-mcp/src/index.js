@@ -217,6 +217,41 @@ function buildServer(env) {
   );
 
   server.registerTool(
+    "nutrition_api",
+    {
+      description:
+        "Read-only escape hatch: GET any Nutrition API endpoint directly, including query parameters that the " +
+        "dedicated tools above may not expose yet. Use this when a dedicated tool lacks a filter you need " +
+        "(for example a date range or a pagination offset) — it always reflects the current server, whereas the " +
+        "dedicated tool schemas are fixed until the connector is reconnected.\n\n" +
+        "Call with no endpoint to fetch the OpenAPI spec listing every available path and its parameters.\n\n" +
+        "Common paths: /logs (supports date, start_date, end_date, limit, offset), /summaries, /metrics, " +
+        "/activities, /goals, /goals/history, /strength/sets, /strength/workouts.\n\n" +
+        "List responses are paginated and include `total`, `limit`, and `offset` — check `total` and page with " +
+        "`offset` rather than assuming the first page is everything.\n\n" +
+        "GET only, so this cannot create, update, or delete anything. Use the dedicated write tools for changes.",
+      inputSchema: {
+        endpoint: z
+          .string()
+          .optional()
+          .describe(
+            "Path with optional query string, e.g. '/logs?start_date=2026-08-01&end_date=2026-08-31&limit=200'. " +
+              "Omit to fetch the OpenAPI spec."
+          ),
+      },
+    },
+    async ({ endpoint }) => {
+      let path = (endpoint ?? "").trim();
+      if (path && !path.startsWith("/")) path = `/${path}`;
+      // Reject protocol-relative paths so the endpoint cannot be redirected off-host.
+      if (path.startsWith("//")) {
+        throw new Error("endpoint must be a path on the Nutrition API, e.g. '/logs?limit=10'");
+      }
+      return ok(await nutritionRequest(path, { method: "GET" }));
+    }
+  );
+
+  server.registerTool(
     "get_summaries",
     {
       description:
