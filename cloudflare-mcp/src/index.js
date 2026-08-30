@@ -217,6 +217,63 @@ function buildServer(env) {
   );
 
   server.registerTool(
+    "get_calibration",
+    {
+      description:
+        "Current maintenance / TDEE estimate and the daily calorie target implied by it, computed " +
+        "from a trailing 56-day window of logged intake and weight trend. Use this whenever the " +
+        "question is about maintenance calories, TDEE, whether a calorie goal still makes sense, " +
+        "or how fast weight is actually moving right now -- it is already computed server-side, so " +
+        "do not re-derive it from raw logs.\n\n" +
+        "Returns BOTH maintenanceGross (includes exercise) and maintenanceEffective (gross minus " +
+        "the exercise discount, matching the tracker's 'Effective kcal' column). These differ by " +
+        "several hundred kcal/day -- always state which you mean. targetAtGoalRate.effectivePerDay " +
+        "is a REST-DAY figure; on a training day add dTarget * that day's burn.\n\n" +
+        "maintenanceGrossSE is the within-window standard error; historicalSpread (once several " +
+        "calibrations exist) is the wider, more honest uncertainty. A single reading should not " +
+        "move a goal on its own.",
+      inputSchema: {
+        fresh: z.coerce.boolean().optional()
+          .describe("Recompute now instead of serving the weekly cache. Slower; usually unnecessary."),
+      },
+    },
+    async ({ fresh }) =>
+      ok(await nutritionRequest(`/calibration${fresh ? "?fresh=true" : ""}`))
+  );
+
+  server.registerTool(
+    "get_phases",
+    {
+      description:
+        "Weight history segmented into loss/gain phases, with maintenance derived from them. " +
+        "Answers 'what happened over my history' -- for 'what is true now' use get_calibration.\n\n" +
+        "Phase boundaries are a function of the detection settings, not facts. smoothDays dominates: " +
+        "a centred average of N days erases swings shorter than about N before detection runs, so " +
+        "lower it before lowering thresh. Re-run at two or three settings before treating a phase " +
+        "as real.\n\n" +
+        "The response includes a `guidance` array of interpretation caveats. Read it before drawing " +
+        "conclusions -- in particular, kPerLb (how maintenance scales with body weight) CANNOT be " +
+        "fitted from this data and attempting it yields a physiologically impossible negative value.",
+      inputSchema: {
+        thresh: z.coerce.number().optional().describe("Reversal in lb before a turn counts (default 2.0). Lower = more phases."),
+        minWeeks: z.coerce.number().optional().describe("Discard phases shorter than this (default 2)."),
+        smoothDays: z.coerce.number().optional().describe("Centred smoothing window before detection (default 28). The dominant knob."),
+        dMeasure: z.coerce.number().optional().describe("Analysis exercise discount. Defaults to the stored setting."),
+        dTarget: z.coerce.number().optional().describe("Target exercise discount. Defaults to the stored setting."),
+        kPerLb: z.coerce.number().optional().describe("Assumed maintenance change per lb. An assumption, not a fit -- see guidance."),
+        desiredRate: z.coerce.number().optional().describe("Target lb/week for computing a calorie target."),
+      },
+    },
+    async (args) => {
+      const p = new URLSearchParams();
+      ["thresh", "minWeeks", "smoothDays", "dMeasure", "dTarget", "kPerLb", "desiredRate"]
+        .forEach(function (k) { if (args[k] !== undefined) p.set(k, String(args[k])); });
+      const qs = p.toString();
+      return ok(await nutritionRequest(`/phases${qs ? "?" + qs : ""}`));
+    }
+  );
+
+  server.registerTool(
     "nutrition_api",
     {
       description:
