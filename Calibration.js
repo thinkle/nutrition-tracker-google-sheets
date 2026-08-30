@@ -373,6 +373,13 @@ const CAL_COLUMNS = [
   'goalRateLbPerWeek', 'targetEffectivePerDay',
   'bmr', 'impliedPAL', 'impliedUnderLogKcal',
   'driftRun', 'driftFlag',
+  // Full response payload. The flat columns above are for reading the sheet by
+  // eye and for charting; this is what the API serves, so a cached response is
+  // byte-identical in shape to a fresh one. Without it the two differed --
+  // cache returned flat column names and silently dropped the units note,
+  // historicalSpread and the nested blocks, which is the shape agents get by
+  // default once the weekly trigger is running.
+  'payloadJson',
 ];
 
 function cal_appendRow_(ss, cal) {
@@ -398,17 +405,36 @@ function cal_appendRow_(ss, cal) {
     b.available ? pa_round_(b.impliedPAL, 2) : '',
     b.available ? Math.round(b.impliedUnderLogKcal) : '',
     cal.drift.consecutiveAgainstGoal, cal.drift.flag ? 'YES' : '',
+    JSON.stringify(cal),
   ]);
 }
 
-/** Latest cached calibration as an object, or null. */
+/**
+ * Latest cached calibration, in the same shape a fresh compute returns.
+ *
+ * Prefers the stored payload so callers see one consistent schema. Falls back
+ * to the flat columns for rows written before payloadJson existed, marking
+ * them so a caller can tell why the nested fields are missing.
+ */
 function cal_latest_(ss) {
   const sh = ss.getSheetByName(CAL_SHEET);
   if (!sh || sh.getLastRow() < 2) return null;
   const head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-  const row = sh.getRange(sh.getLastRow(), 1, 1, sh.getLastColumn()).getValues()[0];
+  const row  = sh.getRange(sh.getLastRow(), 1, 1, sh.getLastColumn()).getValues()[0];
+
+  const jsonCol = head.indexOf('payloadJson');
+  if (jsonCol >= 0 && row[jsonCol]) {
+    try {
+      return JSON.parse(row[jsonCol]);
+    } catch (err) {
+      console.warn('[Calibration] cached payload unparseable, falling back: ' + err);
+    }
+  }
   const out = {};
-  head.forEach(function (h, i) { if (h) out[h] = row[i]; });
+  head.forEach(function (h, i) { if (h && h !== 'payloadJson') out[h] = row[i]; });
+  out.schema = 'legacy-flat';
+  out.schemaNote = 'Cached before payloadJson existed, so nested fields are absent. ' +
+                   'Pass ?fresh=true for the full schema.';
   return out;
 }
 
@@ -420,7 +446,9 @@ function cal_history_(ss) {
   const head = data.shift();
   const rows = data.filter(function (r) { return r[0]; }).map(function (r) {
     const o = {};
-    head.forEach(function (h, i) { if (h) o[h] = r[i]; });
+    // Skip payloadJson: history is for scanning trends, and embedding a full
+    // payload per row would bloat the response for no benefit.
+    head.forEach(function (h, i) { if (h && h !== 'payloadJson') o[h] = r[i]; });
     return o;
   });
   rows.reverse();
