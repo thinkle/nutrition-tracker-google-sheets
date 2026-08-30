@@ -237,6 +237,126 @@ function computeTarget() {
  * Nutrition: only days with gross > 0 (actually logged food) are populated.
  */
 /**
+ * Headless phase analysis for the API.
+ *
+ * Same pipeline as runPhaseAnalysis, but returns data instead of writing
+ * sheets or opening dialogs, and takes the detector tunables as arguments so
+ * a caller can explore sensitivity without editing constants and redeploying.
+ *
+ * opts: { thresh, minWeeks, smoothDays, dMeasure, dTarget, kPerLb, desiredRate }
+ */
+function pa_analyzeHeadless_(ss, tz, opts) {
+  opts = opts || {};
+  const num = function (v, dflt) { const f = parseFloat(v); return isFinite(f) ? f : dflt; };
+
+  const settings    = pa_readSettings_(ss);
+  const settingRate = parseFloat(settings['activity_credit_rate']);
+
+  const thresh     = num(opts.thresh,     PA_THRESH);
+  const minWeeks   = num(opts.minWeeks,   PA_MIN_WEEKS);
+  const smoothDays = num(opts.smoothDays, 28);
+  const dMeasure   = num(opts.dMeasure,   PA_D_MEASURE);
+  const dTarget    = num(opts.dTarget,    isFinite(settingRate) ? settingRate : PA_D_TARGET);
+  const kPerLb     = num(opts.kPerLb,     PA_K_PER_LB);
+  const desiredRate = num(opts.desiredRate, 0);
+
+  const series = pa_readDailySeries_(ss, tz);
+  if (!series) return { error: 'Could not read Metrics/Summary series' };
+
+  const smoothed = pa_smoothWeights_(series.weights, smoothDays);
+  const pivots   = pa_zigzagPivots_(smoothed, thresh);
+  const phases   = pa_buildPhases_(series, smoothed, pivots, dMeasure, minWeeks);
+
+  if (!phases.length) {
+    return {
+      error: 'No phases detected at these settings',
+      params: { thresh: thresh, minWeeks: minWeeks, smoothDays: smoothDays },
+      hint: 'Lower thresh (smaller reversals count as turns), lower minWeeks, or lower ' +
+            'smoothDays. Note smoothDays gates everything: a centred average of N days ' +
+            'erases any swing shorter than about N before the detector runs.',
+    };
+  }
+
+  const maint    = pa_computeTargetCalcs_(phases, series, dMeasure, dTarget, kPerLb, desiredRate);
+  const trailing = pa_trailingEstimate_(series, maint, 21, dMeasure);
+
+  return {
+    params: {
+      thresh: thresh, minWeeks: minWeeks, smoothDays: smoothDays,
+      dMeasure: dMeasure, dTarget: dTarget, kPerLb: kPerLb, desiredRate: desiredRate,
+    },
+    phaseCount: phases.length,
+    phases: phases.map(function (p) {
+      return {
+        num: p.num, type: p.type,
+        startDate: p.startDate, endDate: p.endDate,
+        days: p.days, weeks: pa_round_(p.weeks, 1),
+        startW: pa_round_(p.startW, 1), endW: pa_round_(p.endW, 1),
+        rateLbPerWeek: pa_round_(p.rate, 3),
+        avgGross: Math.round(p.avgGross), avgBurn: Math.round(p.avgBurn),
+        avgEffAtDMeasure: Math.round(p.avgEff),
+        avgEffAtDTarget: Math.round(p.avgGross - dTarget * p.avgBurn),
+        avgProtein: pa_round_(p.avgProtein, 1), avgFiber: pa_round_(p.avgFiber, 1),
+        nutritionDays: p.nutritionDays,
+      };
+    }),
+    maintenance: {
+      wRef: pa_round_(maint.wRef, 1), wNow: pa_round_(maint.wNow, 1),
+      maintenanceEffectiveAtDTarget: Math.round(maint.maintenanceWeightedNow),
+      maintenanceNetAtDMeasure: Math.round(maint.maintenanceNow),
+      targetEffectiveAtDTarget: isFinite(maint.targetWeighted) ? Math.round(maint.targetWeighted) : null,
+      kPerLb: kPerLb,
+    },
+    trailing: trailing ? {
+      windowDays: trailing.windowDays, loggedDays: trailing.loggedDays,
+      startDate: trailing.startDate, endDate: trailing.endDate,
+      avgGross: Math.round(trailing.avgGross), avgBurn: Math.round(trailing.avgBurn),
+      avgEff: Math.round(trailing.avgEff), gapVsMaintenance: Math.round(trailing.gap),
+    } : null,
+    guidance: pa_guidance_(),
+  };
+}
+
+/**
+ * Interpretation notes returned with every analysis.
+ *
+ * These are conclusions that cost real work to establish and are easy to get
+ * backwards from the numbers alone, so they ship with the data rather than
+ * living only in a commit message.
+ */
+function pa_guidance_() {
+  return [
+    'UNITS: "effective" = gross - dTarget*burn and matches the Summary "Effective kcal" ' +
+    'column; it is a REST-DAY figure, so on a training day add dTarget*burn to get gross. ' +
+    'Gross and effective differ by several hundred kcal/day here. Always say which you mean.',
+
+    'kPerLb (maintenance change per lb of body weight) is an ASSUMPTION, not a fit. It ' +
+    'cannot be estimated from this data: logged intake correlates about -0.87 with weight ' +
+    'because intake is a behavioural response to weight (dieting hard when heavy). Fitting ' +
+    'it yields a negative coefficient, which is physiologically impossible. Roughly 6 ' +
+    'kcal/lb/day is the physiological expectation (BMR scales ~4.5 kcal/lb, times an ' +
+    'activity factor). Do not "improve" it by regression.',
+
+    'DATA QUALITY: logging before roughly June 2025 is sparse, including days recorded as ' +
+    '0 kcal that were simply not logged. Days under PA_MIN_GROSS_KCAL are excluded, but ' +
+    'whole early windows are still thin. Prefer recent data for anything actionable.',
+
+    'PHASE BOUNDARIES are a function of thresh and smoothDays, not facts. smoothDays gates ' +
+    'everything: a centred average of N days erases swings shorter than about N. Re-run at ' +
+    'two or three settings before treating a phase as real.',
+
+    'FOR "WHAT IS TRUE NOW" use GET /calibration instead. It is a trailing-window energy ' +
+    'balance that never does phase detection, so it cannot be wrong about boundaries. This ' +
+    'endpoint answers "what happened across my history".',
+
+    'UNDER-LOGGING is real but its size is not identifiable from this data alone: any ' +
+    'constant offset shifts logged intake and measured maintenance together, leaving the ' +
+    'relationship unchanged. Targets calibrated from these numbers are in LOGGED units and ' +
+    'already absorb it. Comparing them to absolute outside norms mixes units.',
+  ];
+}
+
+/**
  * Report a problem to the user when a UI exists, otherwise log it.
  *
  * pa_readDailySeries_ runs from three contexts: the spreadsheet menu (UI
@@ -369,13 +489,17 @@ function pa_readDailySeries_(ss, tz) {
  * the last ~14 days produce null (no right-side window), which is expected.
  * Do NOT use for real-time "am I losing right now" — see pa_trailingEstimate_.
  */
-function pa_smoothWeights_(weights) {
+function pa_smoothWeights_(weights, windowDays) {
   const n = weights.length;
-  const MIN_NON_NULL = 18;
+  const win = (isFinite(windowDays) && windowDays >= 3) ? Math.round(windowDays) : 28;
+  const back = Math.floor((win - 1) / 2);
+  const fwd  = win - 1 - back;
+  // Require ~64% of the window populated, the same ratio as the original 18/28.
+  const MIN_NON_NULL = Math.max(3, Math.round(win * 18 / 28));
   const out = new Array(n).fill(null);
   for (let i = 0; i < n; i++) {
-    const lo = Math.max(0, i - 13);
-    const hi = Math.min(n - 1, i + 14);
+    const lo = Math.max(0, i - back);
+    const hi = Math.min(n - 1, i + fwd);
     let sum = 0, cnt = 0;
     for (let j = lo; j <= hi; j++) {
       if (weights[j] !== null) { sum += weights[j]; cnt++; }

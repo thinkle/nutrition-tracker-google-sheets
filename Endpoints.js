@@ -129,6 +129,8 @@ function internalDoGet(e) {
       return handleGetCalibration(e, ss);
     } else if (path === 'calibration/history') {
       return sendJsonResponse(paginateArray(cal_history_(ss), e));
+    } else if (path === 'phases') {
+      return handleGetPhases(e, ss);
     } else if (path === 'strength/workouts') {
       return sendJsonResponse(paginateArray(handleGetStrengthWorkouts(e), e));
     } else if (path === 'strength/sets/filter') {
@@ -308,6 +310,27 @@ function handleGetLogs(e, ss) {
     return sendJsonResponse(paginateArray(sortByDateDesc(filtered), e));
   }
   return sendJsonResponse(paginateArray(sortByDateDesc(logs), e));
+}
+
+/**
+ * GET /phases — phase analysis with the detector tunables exposed.
+ *
+ * Always recomputes: the point is to let a caller vary thresh / smoothDays and
+ * see how the phase picture responds, so a cache would defeat it. Costs a few
+ * seconds. For a fast "what is true now" number use /calibration instead.
+ */
+function handleGetPhases(e, ss) {
+  const result = pa_analyzeHeadless_(ss, Session.getScriptTimeZone(), {
+    thresh: e.parameter.thresh,
+    minWeeks: e.parameter.minWeeks,
+    smoothDays: e.parameter.smoothDays,
+    dMeasure: e.parameter.dMeasure,
+    dTarget: e.parameter.dTarget,
+    kPerLb: e.parameter.kPerLb,
+    desiredRate: e.parameter.desiredRate,
+  });
+  if (result && result.error) return sendJsonResponse(result, 400);
+  return sendJsonResponse(result);
 }
 
 /**

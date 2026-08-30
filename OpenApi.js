@@ -680,6 +680,43 @@ function getOpenApiSpec() {
       "/settings": {
         ...settingsDocs
       },
+      "/phases": {
+        get: {
+          operationId: "phases",
+          summary: "Weight phase analysis with tunable detection",
+          description:
+            "Segments weight history into loss/gain phases and derives maintenance from them. " +
+            "Answers 'what happened across my history'; for 'what is true now' use /calibration, " +
+            "which uses a trailing window and does no phase detection. " +
+            "Phase boundaries depend on thresh and smoothDays and are not facts -- re-run at a " +
+            "couple of settings before treating a phase as real. Always recomputes (a few seconds). " +
+            "The response includes a 'guidance' array of interpretation caveats; read it before " +
+            "drawing conclusions, particularly on gross-vs-effective units and on kPerLb, which " +
+            "cannot be fitted from this data.",
+          parameters: [
+            { name: "thresh", in: "query", required: false, schema: { type: "number", default: 2.0 },
+              description: "Reversal in lb before a turning point counts. Lower = more phases." },
+            { name: "minWeeks", in: "query", required: false, schema: { type: "number", default: 2 },
+              description: "Discard phases shorter than this many weeks." },
+            { name: "smoothDays", in: "query", required: false, schema: { type: "integer", default: 28 },
+              description: "Centred moving-average window applied before detection. Gates everything: swings shorter than about this many days cannot be detected at any thresh." },
+            { name: "dMeasure", in: "query", required: false, schema: { type: "number" },
+              description: "Discount used for analysis units." },
+            { name: "dTarget", in: "query", required: false, schema: { type: "number" },
+              description: "Discount for daily targets. Defaults to Settings activity_credit_rate." },
+            { name: "kPerLb", in: "query", required: false, schema: { type: "number", default: 6 },
+              description: "Assumed maintenance change per lb. An assumption, not a fit -- see guidance." },
+            { name: "desiredRate", in: "query", required: false, schema: { type: "number", default: 0 },
+              description: "Target lb/week used to compute a calorie target." }
+          ],
+          responses: {
+            "200": { description: "Phases, maintenance, trailing estimate, and guidance.",
+              content: { "application/json": { schema: { type: "object" } } } },
+            "400": { description: "No phases detected at these settings (response includes a hint).",
+              content: { "application/json": { schema: { type: "object" } } } }
+          }
+        }
+      },
       "/calibration": {
         get: {
           operationId: "calibration",
