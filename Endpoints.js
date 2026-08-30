@@ -116,6 +116,10 @@ function internalDoGet(e) {
       return sendJsonResponse(paginateArray(handleGetStrengthSetsFilter(e), e));
     } else if (path === 'strength/sets') {
       return sendJsonResponse(paginateArray(handleGetStrengthSetsFilter(e), e));
+    } else if (path === 'strength/exercises/uncategorized') {
+      const uncategorized = handleGetUncategorizedExercises(e);
+      if (uncategorized && uncategorized.error) return sendJsonResponse(uncategorized, 500);
+      return sendJsonResponse(paginateArray(uncategorized, e));
     } else if (path === 'strength/exercises') {
       return sendJsonResponse(paginateArray(handleGetStrengthExercises(e), e));
     } else if (path === 'strength/workout') {

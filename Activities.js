@@ -247,6 +247,11 @@ function readActivities(e) {
   const endDate = params.end_date || params.endDate;
   const review = params.review;
   const date = params.date;
+  // RawJSON holds the entire unprocessed source payload (4-45KB per Strava
+  // row). It is debugging ballast for every normal consumer, and including it
+  // by default made even a one-week pull blow past agent context limits, so
+  // callers must now opt in explicitly.
+  const includeRaw = isTruthyParam_(params.include_raw || params.includeRaw);
 
   const filtered = rows.filter(row => {
     const rowDate = formatAsDateString(row.Date);
@@ -257,9 +262,13 @@ function readActivities(e) {
     return true;
   });
 
+  // Sort newest-first. Date cells come back from getValues() as Date objects,
+  // whose String() form ("Wed Sep 24 2025 ...") sorts by weekday name — so the
+  // raw values must be normalized to yyyy-MM-dd before comparing, or an
+  // unfiltered call returns an essentially arbitrary "most recent" page.
   filtered.sort((a, b) => {
-    const ad = String(a.Date || '');
-    const bd = String(b.Date || '');
+    const ad = a.Date ? formatAsDateString(a.Date) : '';
+    const bd = b.Date ? formatAsDateString(b.Date) : '';
     const at = String(a.StartTime || '');
     const bt = String(b.StartTime || '');
     return (bd + bt).localeCompare(ad + at);
@@ -267,10 +276,18 @@ function readActivities(e) {
   return filtered.map(row => {
     const clean = {};
     Object.keys(row).forEach(k => {
-      if (k !== '_rowNum') clean[k] = row[k];
+      if (k === '_rowNum') return;
+      if (k === 'RawJSON' && !includeRaw) return;
+      clean[k] = row[k];
     });
     return clean;
   });
+}
+
+/** Query-string booleans arrive as strings; treat only explicit truthy values as true. */
+function isTruthyParam_(value) {
+  const v = String(value === undefined || value === null ? '' : value).trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
 }
 
 function handleGetActivities(e) {

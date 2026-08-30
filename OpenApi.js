@@ -200,7 +200,7 @@ function getOpenApiSpec() {
     get: {
       operationId: "getActivities",
       summary: "Fetch activities",
-      description: "Fetch source-aware activities. Filter by date, date range, or review status.",
+      description: "Fetch source-aware activities, newest first. Filter by date, date range, or review status. The RawJSON source payload is omitted unless include_raw is set.",
       parameters: [
         {
           name: "date",
@@ -229,6 +229,13 @@ function getOpenApiSpec() {
           required: false,
           schema: { type: "string" },
           description: "Filter activities by Review value, e.g. ok, legacy_only, source_matched, needs_review, duplicate, ignore."
+        },
+        {
+          name: "include_raw",
+          in: "query",
+          required: false,
+          schema: { type: "boolean", default: false },
+          description: "Include the RawJSON source payload on each row. Omitted by default because Strava payloads run 4-45KB each and quickly overflow a response. Only enable when debugging the sync for specific rows."
         },
         {
           name: "limit",
@@ -1159,6 +1166,103 @@ function getOpenApiSpec() {
                 }
               }
             }
+          }
+        }
+      },
+      "/strength/exercises/uncategorized": {
+        get: {
+          operationId: "listUncategorizedExercises",
+          summary: "List exercises with no body-focus tags",
+          description: "Exercises present in strength history that carry no muscle tags in the ExerciseMapping sheet, most-used first. These are invisible to focus-filtered set queries. Tag them via POST /upsertExerciseMapping; because the Sets sheet resolves focus columns by exercise name at read time, tagging applies retroactively to all existing sets.",
+          parameters: [
+            {
+              name: "includeCategorized",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", default: false },
+              description: "Also return already-tagged exercises, each with its current tags and status."
+            },
+            {
+              name: "daysBack",
+              in: "query",
+              required: false,
+              schema: { type: "integer" },
+              description: "Only consider exercises with sets logged in the last N days. Omit for all history."
+            },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50 },
+              description: "Maximum number of items to return (default 50)."
+            },
+            {
+              name: "offset",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 0 },
+              description: "Number of items to skip (default 0)."
+            }
+          ],
+          responses: {
+            "200": {
+              description: "Paginated array of exercises needing classification.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      items: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            exerciseName: { type: "string" },
+                            setCount: { type: "integer", description: "How many sets have been logged under this name." },
+                            lastSeen: { type: "string", format: "date" },
+                            categorized: { type: "boolean" },
+                            status: { type: "string", description: "no_mapping_row, row_present_but_untagged, or categorized." },
+                            mainFocus: { type: "string" },
+                            tags: { type: "array", items: { type: "string" } }
+                          }
+                        }
+                      },
+                      total: { type: "integer" },
+                      limit: { type: "integer" },
+                      offset: { type: "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/upsertExerciseMapping": {
+        post: {
+          operationId: "upsertExerciseMapping",
+          summary: "Classify an exercise by muscle group",
+          description: "Records which muscles an exercise works, keyed by exercise name, so its sets become findable by body focus. Only blank cells are filled - an existing classification is never overwritten. Accepted muscle terms: quads, hams, glutes, chest, back, shoulders, arms, core, calves, plus synonyms (biceps, triceps, abs, lats, delts, pecs, quadriceps, hamstrings...). Unrecognized terms come back in ignoredMuscles rather than being applied.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["exerciseName", "primaryMuscles"],
+                  properties: {
+                    exerciseName: { type: "string", description: "Exact exercise name as it appears in strength history." },
+                    primaryMuscles: { type: "array", items: { type: "string" }, description: "Main muscles worked; the first sets Main Focus." },
+                    secondaryMuscles: { type: "array", items: { type: "string" }, description: "Secondary muscles; tagged but do not set Main Focus." }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            "200": { description: "Mapping row updated." },
+            "201": { description: "Mapping row created." },
+            "400": { description: "Missing exerciseName or mapping sheet/column not found." }
           }
         }
       },

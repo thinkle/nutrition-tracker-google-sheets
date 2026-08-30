@@ -39,10 +39,71 @@ const APP_MUSCLE_TO_SHEET_BUCKET = {
   calves: 'Calves',
 };
 
+// The map above speaks the Speediance catalog's vocabulary, which is the only
+// thing that fed it originally. Callers describing an exercise by hand reach
+// for this sheet's own bucket names ("arms", "quads") or everyday synonyms
+// ("abs", "biceps"), none of which were keys — so those tags were silently
+// dropped and the mapping row came out half-filled and looking fine. Accept
+// both vocabularies. Keys must be lowercase; values must be bucket headers.
+const EXTRA_MUSCLE_ALIASES = {
+  // this sheet's own bucket names, so a caller can echo back what it reads
+  quads: 'Quads',
+  hams: 'Hams',
+  glutes: 'Glutes',
+  chest: 'Chest',
+  back: 'Back',
+  shoulders: 'Shoulders',
+  arms: 'Arms',
+  core: 'Core',
+  calves: 'Calves',
+  // everyday synonyms
+  quad: 'Quads',
+  hamstring: 'Hams',
+  ham: 'Hams',
+  glute: 'Glutes',
+  butt: 'Glutes',
+  pecs: 'Chest',
+  pectorals: 'Chest',
+  lat: 'Back',
+  'upper back': 'Back',
+  rhomboids: 'Back',
+  trapezius: 'Back',
+  delts: 'Shoulders',
+  deltoids: 'Shoulders',
+  shoulder: 'Shoulders',
+  arm: 'Arms',
+  bicep: 'Arms',
+  tricep: 'Arms',
+  forearm: 'Arms',
+  abs: 'Core',
+  ab: 'Core',
+  abdominal: 'Core',
+  obliques: 'Core',
+  calf: 'Calves',
+};
+
+/** The full lookup: Speediance catalog terms plus hand-written aliases. */
+const MUSCLE_TO_SHEET_BUCKET = Object.assign(
+  {}, APP_MUSCLE_TO_SHEET_BUCKET, EXTRA_MUSCLE_ALIASES,
+);
+
+/** Every muscle term this API accepts, for error messages and tool docs. */
+function acceptedMuscleTerms_() {
+  return Object.keys(MUSCLE_TO_SHEET_BUCKET).sort();
+}
+
+/** Muscle terms that matched nothing, so callers hear about it rather than
+ *  silently getting a mapping row with fewer tags than they asked for. */
+function unrecognizedMuscles_(muscles) {
+  return (muscles || [])
+    .map(m => String(m || '').trim())
+    .filter(m => m && !MUSCLE_TO_SHEET_BUCKET[m.toLowerCase()]);
+}
+
 function sheetBucketsForMuscles_(muscles) {
   const buckets = new Set();
   for (const muscle of muscles || []) {
-    const bucket = APP_MUSCLE_TO_SHEET_BUCKET[String(muscle || '').trim().toLowerCase()];
+    const bucket = MUSCLE_TO_SHEET_BUCKET[String(muscle || '').trim().toLowerCase()];
     if (bucket) buckets.add(bucket);
   }
   return buckets;
@@ -129,7 +190,19 @@ function upsertExerciseMappingUnlocked_(exerciseName, { primaryMuscles = [], sec
     if (buckets.has(header)) setIfBlank(header, 1);
   }
 
-  return { status, row, exerciseName: name, written };
+  const ignored = unrecognizedMuscles_([
+    ...(primaryMuscles || []), ...(secondaryMuscles || []),
+  ]);
+  const result = { status, row, exerciseName: name, written };
+  if (ignored.length) {
+    result.ignoredMuscles = ignored;
+    result.warning = `Unrecognized muscle term(s) ignored: ${ignored.join(', ')}. `
+      + `Accepted terms: ${acceptedMuscleTerms_().join(', ')}.`;
+  }
+  if (!written.length && !ignored.length) {
+    result.note = 'No cells written - every target cell already had a value (existing values are never overwritten).';
+  }
+  return result;
 }
 
 /**
@@ -183,4 +256,115 @@ function handlePostUpsertExerciseMapping(e) {
   } finally {
     try { lock.releaseLock(); } catch (releaseError) { /* ignore */ }
   }
+}
+
+/**
+ * GET /strength/exercises/uncategorized
+ *
+ * Cross-references every distinct exercise name in the Strength Sets sheet
+ * against the ExerciseMapping sheet and returns the ones carrying no muscle
+ * tags. This is the worklist for "categorize my untagged exercises": hand it
+ * to an agent, let it tag each one via POST /upsertExerciseMapping.
+ *
+ * Worth knowing: the Sets sheet resolves its focus columns by lookup against
+ * ExerciseMapping at read time, so tagging an exercise here retroactively
+ * categorizes every set ever logged under that name. There is no backfill to
+ * run afterward.
+ *
+ * Params:
+ *   includeCategorized=true  - return tagged exercises too, each with status
+ *   daysBack=N               - only consider sets logged in the last N days
+ */
+function handleGetUncategorizedExercises(e) {
+  const params = (e && e.parameter) || {};
+  const includeCategorized = isTruthyParam_(params.includeCategorized || params.include_categorized);
+  const daysBack = Number(params.daysBack || params.days_back || 0);
+
+  ensureStrengthSheetsExist_();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // --- distinct exercise names from the Sets sheet, with usage stats -------
+  const setsSheet = ss.getSheetByName(SHEET_STRENGTH_SETS);
+  const setsData = setsSheet.getDataRange().getValues();
+  const setsHeaders = setsData.shift();
+  const sIdx = {};
+  setsHeaders.forEach((h, i) => (sIdx[h] = i));
+  const tsCol = sIdx['endTimestamp'] !== undefined ? 'endTimestamp' : 'EndTimestamp';
+
+  const cutoffMillis = (isFinite(daysBack) && daysBack > 0)
+    ? Date.now() - daysBack * 24 * 60 * 60 * 1000
+    : 0;
+
+  const byName = {};
+  setsData.forEach(row => {
+    const name = String(row[sIdx['ExerciseName']] || '').trim();
+    if (!name) return;
+    const tsMillis = parseTimestampMillis_(row[sIdx[tsCol]]);
+    if (cutoffMillis && (!tsMillis || tsMillis < cutoffMillis)) return;
+    const entry = byName[name.toLowerCase()]
+      || (byName[name.toLowerCase()] = { exerciseName: name, setCount: 0, lastSeen: '' });
+    entry.setCount++;
+    if (tsMillis) {
+      const day = formatAsDateString(new Date(tsMillis));
+      if (day > entry.lastSeen) entry.lastSeen = day;
+    }
+  });
+
+  // --- the mapping sheet, read once (not once per exercise) ---------------
+  const mapSheet = getExerciseMappingSheet_();
+  if (!mapSheet) {
+    return { error: `Sheet "${SHEET_EXERCISE_MAPPING}" not found`, items: [] };
+  }
+  const headerIndex = getExerciseMappingHeaderIndexMap_(mapSheet);
+  const keyColumn = headerIndex[EXERCISE_MAPPING_KEY_HEADER];
+  if (!keyColumn) {
+    return { error: `Column "${EXERCISE_MAPPING_KEY_HEADER}" not found`, items: [] };
+  }
+  const lastRow = mapSheet.getLastRow();
+  const lastCol = mapSheet.getLastColumn();
+  const mapRows = lastRow > 1 ? mapSheet.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
+  const mapByName = {};
+  mapRows.forEach(row => {
+    const key = String(row[keyColumn - 1] || '').trim().toLowerCase();
+    if (key) mapByName[key] = row;
+  });
+
+  // Only muscle-bucket columns that actually exist on the sheet today.
+  const presentMuscleHeaders = EXERCISE_MAPPING_MUSCLE_HEADERS
+    .filter(h => headerIndex[h]);
+
+  const items = [];
+  Object.keys(byName).forEach(key => {
+    const entry = byName[key];
+    const mapRow = mapByName[key];
+    const tags = [];
+    if (mapRow) {
+      presentMuscleHeaders.forEach(h => {
+        if (Number(mapRow[headerIndex[h] - 1]) === 1) tags.push(h);
+      });
+    }
+    const mainFocus = (mapRow && headerIndex[EXERCISE_MAPPING_MAIN_FOCUS_HEADER])
+      ? String(mapRow[headerIndex[EXERCISE_MAPPING_MAIN_FOCUS_HEADER] - 1] || '').trim()
+      : '';
+
+    const categorized = tags.length > 0;
+    if (categorized && !includeCategorized) return;
+
+    const item = {
+      exerciseName: entry.exerciseName,
+      setCount: entry.setCount,
+      lastSeen: entry.lastSeen,
+      categorized: categorized,
+      status: !mapRow ? 'no_mapping_row'
+        : (categorized ? 'categorized' : 'row_present_but_untagged'),
+    };
+    if (mainFocus) item.mainFocus = mainFocus;
+    if (tags.length) item.tags = tags;
+    items.push(item);
+  });
+
+  // Most-used first, then most-recent: the highest-value things to tag.
+  items.sort((a, b) => (b.setCount - a.setCount)
+    || String(b.lastSeen).localeCompare(String(a.lastSeen)));
+  return items;
 }

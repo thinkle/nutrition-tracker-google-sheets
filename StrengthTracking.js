@@ -523,6 +523,12 @@ function firstTimestamp_() {
   return "";
 }
 
+/** formatAsDateString() throws on a blank cell; workouts with no EndTimestamp have one. */
+function toDateStringOrBlank_(value) {
+  if (value === '' || value === null || value === undefined) return '';
+  return formatAsDateString(value);
+}
+
 /**
  * GET: /strength/workouts?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
  * Returns compact workout summaries.
@@ -543,7 +549,12 @@ function handleGetStrengthWorkouts(e) {
     .filter((row) => row[idx['ID']] !== '')
     .map((row) => ({
       ID: row[idx['ID']],
-      Date: row[idx['Date']],
+      // Sheets coerces the yyyy-MM-dd string we write into a real date value,
+      // so getValues() hands back a Date object here. Normalize to yyyy-MM-dd:
+      // String(Date) yields "Sat Aug 22 2026 ..." which loses every lexical
+      // comparison against a "2026-08-22" bound, so the range filter below
+      // used to drop *every* row whenever startDate/endDate were supplied.
+      Date: toDateStringOrBlank_(row[idx['Date']]),
       TemplateName: row[idx['TemplateName']],
       TrainingTime: row[idx['TrainingTime']],
       Calories: row[idx['Calories']],
@@ -554,7 +565,8 @@ function handleGetStrengthWorkouts(e) {
       EndTimestamp: row[idx['EndTimestamp']],
     }))
     .filter((w) => {
-      const d = String(w.Date);
+      const d = w.Date;
+      if (!d) return !start && !end;
       if (start && d < start) return false;
       if (end && d > end) return false;
       return true;

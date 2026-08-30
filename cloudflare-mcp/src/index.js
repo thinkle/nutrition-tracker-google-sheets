@@ -10,6 +10,10 @@ import { z } from "zod";
 // values and non-string junk untouched (schema then reports a real error).
 // ---------------------------------------------------------------------------
 
+// Sentinel written into a goal field to mean "intentionally not tracked".
+// A plain-language phrase so it can never be misread as a numeric target (0, none, -).
+const GOAL_UNSET = "no goal set";
+
 function jsonParsed(schema) {
   return z.preprocess((val) => {
     if (typeof val !== "string") return val;
@@ -128,6 +132,19 @@ function buildServer(env) {
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }
 
+  // The Speediance vendor app is currently broken, so the machine is not in
+  // active use and its API is not a source of truth for anything. The tools
+  // are kept wired up in case the vendor fixes the app, but agents should
+  // treat them as dormant and reach for the direct strength tools instead.
+  // Prefixing the descriptions (rather than deleting the tools) keeps the
+  // plumbing intact while making the preference legible at tool-selection time.
+  const SPEEDIANCE_DEPRECATION =
+    "[DEPRECATED - DO NOT USE UNLESS EXPLICITLY ASKED] The Speediance machine and its vendor app are not currently in use, and this endpoint is dormant/unreliable. It is NOT a source of truth for what the user has actually trained: strength sessions now come from the direct strength tools. For strength history and analysis use list_strength_workouts / get_strength_sets / get_strength_workout / get_exercise_data; to record a session use log_manual_strength. Only call this tool if the user explicitly names Speediance or asks to work with the machine directly.";
+
+  function deprecatedSpeediance(description) {
+    return `${SPEEDIANCE_DEPRECATION}\n\n---\n\n${description}`;
+  }
+
   function localDateString(timeZone = "America/New_York") {
     return new Intl.DateTimeFormat("en-CA", {
       timeZone,
@@ -225,20 +242,33 @@ function buildServer(env) {
 
   server.registerTool(
     "get_goals",
-    { description: "Get current nutrition goals. Call this at the start of any nutrition session so you can compare intake against targets." },
+    {
+      description:
+        "Get the user's current nutrition goals. Call this at the start of any nutrition session so you can compare intake against targets.\n\n" +
+        "How goals work: each goal field is tracked independently, and each entry is dated. This endpoint returns the MOST RECENT value for each field. " +
+        "Numeric fields (kcal, protein, fat, carbs, fiber, added_sugar, alcohol) are daily gram/calorie targets. " +
+        "NutritionGoal, WeightGoal, and OtherGoal are free-text — use them for qualitative or computed goals that don't reduce to a single daily number " +
+        "(e.g. \"14g fiber per 1000 kcal\"), and read Notes for caveats. " +
+        "A field whose value is \"" + GOAL_UNSET + "\" has been intentionally untracked — treat it as \"no goal\", not zero.",
+    },
     async () => ok(await nutritionRequest("/goals"))
   );
 
   server.registerTool(
     "get_goal_history",
-    { description: "Get the history of past nutrition goal changes over time." },
+    { description: "Get the history of past nutrition goal changes over time. Each row is a dated entry; blank fields were not touched by that entry." },
     async () => ok(await nutritionRequest("/goals/history"))
   );
 
   server.registerTool(
     "update_goals",
     {
-      description: "Set new nutrition goals. Only include the fields you want to change.",
+      description:
+        "Set or change the user's nutrition goals. Only include the fields you want to change — omitted fields keep their current value. " +
+        "This appends a new dated entry, so partial updates are fine and fully expected. " +
+        "Use the numeric fields for daily targets. Use NutritionGoal / WeightGoal / OtherGoal for qualitative or computed goals stated in plain language, " +
+        "and Notes for any caveats an agent should know when reporting progress. " +
+        "To stop tracking a goal, pass its name in `clear` (do NOT set it to 0).",
       inputSchema: {
         kcal: z.coerce.number().optional().describe("Daily calorie target"),
         protein: z.coerce.number().optional().describe("Daily protein target in grams"),
@@ -247,12 +277,41 @@ function buildServer(env) {
         fiber: z.coerce.number().optional().describe("Daily fiber target in grams"),
         added_sugar: z.coerce.number().optional().describe("Daily added sugar target in grams"),
         alcohol: z.coerce.number().optional().describe("Daily alcohol target in grams"),
+        NutritionGoal: z.string().optional().describe("Free-text nutrition goal, e.g. \"14g fiber per 1000 kcal gross intake\""),
+        WeightGoal: z.string().optional().describe("Free-text weight goal"),
+        OtherGoal: z.string().optional().describe("Free-text catch-all goal"),
+        Notes: z.string().optional().describe("Caveats / context for interpreting the goals above"),
+        clear: jsonParsed(
+          z.array(
+            z.enum([
+              "kcal",
+              "protein",
+              "fat",
+              "carbs",
+              "fiber",
+              "added_sugar",
+              "alcohol",
+              "NutritionGoal",
+              "WeightGoal",
+              "OtherGoal",
+              "Notes",
+            ])
+          )
+        )
+          .optional()
+          .describe("Goal fields to stop tracking. Writes a \"" + GOAL_UNSET + "\" marker so it overrides any earlier value."),
       },
     },
     async (fields) => {
-      const body = {};
-      for (const [k, v] of Object.entries(fields)) {
+      const { clear, ...rest } = fields;
+      // ISO timestamp (not a bare date) so a same-day correction sorts after the
+      // entry it replaces in the GAS "latest value wins per field" logic.
+      const body = { Date: new Date().toISOString() };
+      for (const [k, v] of Object.entries(rest)) {
         if (v !== undefined) body[k] = v;
+      }
+      for (const f of clear ?? []) {
+        body[f] = GOAL_UNSET;
       }
       return ok(await nutritionRequest("/goals", { method: "POST", body: JSON.stringify(body) }));
     }
@@ -332,7 +391,7 @@ function buildServer(env) {
   server.registerTool(
     "get_activities",
     {
-      description: "Get activity rows, optionally filtered by date, date range, or Review status.",
+      description: "Get activity rows (all sources: Strava, Xert, Speediance, manual), optionally filtered by date, date range, or Review status. Results are newest-first. Returns every activity type — rides, walks, hikes, weight training, paddling — so use this, not the ride-specific tools, when summarizing overall training load for a period.",
       inputSchema: {
         date: z.string().optional().describe("Specific date in YYYY-MM-DD format"),
         start_date: z.string().optional().describe("Start date in YYYY-MM-DD format"),
@@ -340,9 +399,10 @@ function buildServer(env) {
         review: z.string().optional().describe("Review value to filter, e.g. needs_review"),
         limit: z.coerce.number().optional(),
         offset: z.coerce.number().optional(),
+        include_raw: z.coerce.boolean().optional().describe("Include the RawJSON source payload for each row. Defaults to false. Each Strava payload is 4-45KB, so a single week can exceed the response size limit — only turn this on when debugging the sync itself for a handful of specific rows."),
       },
     },
-    async ({ date, start_date, end_date, review, limit, offset }) => {
+    async ({ date, start_date, end_date, review, limit, offset, include_raw }) => {
       const p = new URLSearchParams();
       if (date) p.set("date", date);
       if (start_date) p.set("start_date", start_date);
@@ -350,6 +410,7 @@ function buildServer(env) {
       if (review) p.set("review", review);
       if (limit !== undefined) p.set("limit", String(limit));
       if (offset !== undefined) p.set("offset", String(offset));
+      if (include_raw) p.set("include_raw", "true");
       const qs = p.toString();
       return ok(await nutritionRequest(`/activities${qs ? "?" + qs : ""}`));
     }
@@ -559,7 +620,7 @@ function buildServer(env) {
   server.registerTool(
     "list_strength_workouts",
     {
-      description: "List strength workout summaries, optionally filtered by date range",
+      description: "List strength workout summaries, newest first. This is the primary source of truth for what strength sessions the user actually did — it covers BOTH machine-ingested and hand-logged sessions. Prefer it over any Speediance tool. Dates are YYYY-MM-DD and the range bounds are inclusive; omit them to get the most recent sessions.",
       inputSchema: {
         startDate: z.string().optional().describe("Start date in YYYY-MM-DD format"),
         endDate: z.string().optional().describe("End date in YYYY-MM-DD format"),
@@ -674,7 +735,7 @@ function buildServer(env) {
   server.registerTool(
     "log_strength_workout",
     {
-      description: "Ingest a raw Speediance workout payload (StrengthIngestWrapper format with 'data' property, or raw workout object) into strength HISTORY. This is the machine-export ingestion path. For a hand-described manual session (exercise names, sets, reps), use log_manual_strength instead. NOTE: strength logging records volume/history only and does NOT credit calories to the nutrition day.",
+      description: "Ingest a raw Speediance workout payload (StrengthIngestWrapper format with 'data' property, or raw workout object) into strength HISTORY. This is the machine-export ingestion path and is rarely the right tool now that the Speediance app is out of use — it exists for automated syncs replaying a captured payload. To log a session the user describes in words (exercise names, sets, reps), use log_manual_strength instead. NOTE: strength logging records volume/history only and does NOT credit calories to the nutrition day.",
       inputSchema: { workoutData: z.string().describe("JSON string of the Speediance workout payload") },
     },
     async ({ workoutData }) =>
@@ -702,6 +763,7 @@ For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done
           reps: z.coerce.number().optional().describe("Reps per set. Omit for a purely timed hold."),
           weight: z.coerce.number().optional().describe("Weight per rep in the user's usual unit. Omit for bodyweight."),
           time: z.coerce.number().optional().describe("Duration per set in seconds, for timed holds like a wall sit."),
+          muscles: jsonParsed(z.array(z.string())).optional().describe(`Muscles this exercise works, e.g. ["arms"] for a curl or ["quads","glutes"] for a squat. STRONGLY RECOMMENDED: without it the exercise gets no body-focus tags, so it stays invisible to get_strength_sets(focus=...) and to any "how much arm work this month" analysis. Accepted: quads, hams, glutes, chest, back, shoulders, arms, core, calves (synonyms like biceps/abs/lats also work). List the main muscle first. Only fills blanks - never overwrites an existing classification.`),
         }))).describe("Exercises performed, in order"),
       },
     },
@@ -721,13 +783,19 @@ For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done
           if (ex.weight !== undefined) { set.avgWeight = ex.weight; set.weightDetail = String(ex.weight); }
           finishedReps.push(set);
         }
-        return {
+        // primaryMuscles is the field the GAS ingest path already reads to
+        // auto-populate the ExerciseMapping sheet, so passing it through here
+        // makes a hand-logged exercise tag itself exactly like a machine
+        // upload does. Omitted when absent so nothing is written blank.
+        const entry = {
           id: `${workoutId}-ex${exIdx + 1}`,
           actionLibraryName: ex.name,
           maxWeight: ex.weight,
           avgWeight: ex.weight,
           finishedReps,
         };
+        if (ex.muscles && ex.muscles.length) entry.primaryMuscles = ex.muscles;
+        return entry;
       });
       const payload = {
         data: {
@@ -747,9 +815,73 @@ For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done
     }
   );
 
+
+  // Muscle tagging -----------------------------------------------------------
+  // The ExerciseMapping sheet is what gives every strength SET its body-focus
+  // columns: the Sets sheet resolves them by exercise name at read time, so
+  // tagging an exercise here retroactively categorizes every set ever logged
+  // under that name. No backfill step exists or is needed.
+
+  server.registerTool(
+    "list_uncategorized_exercises",
+    {
+      description: `List exercises that appear in strength history but carry NO body-focus tags, so they are invisible to get_strength_sets(focus=...) and to any "how much arm work this month" style analysis. Ordered most-used first.
+
+This is the worklist for tagging: call it, then call tag_exercise_muscles once per exercise. Because the sheet resolves focus columns by exercise name at read time, tagging an exercise fixes ALL of its past sets too - there is no backfill to run afterward.
+
+Hand-logged sessions (log_manual_strength without muscles) are the usual reason something shows up here.`,
+      inputSchema: {
+        includeCategorized: z.coerce.boolean().optional().describe("Also return already-tagged exercises, each with its current tags and status. Default false."),
+        daysBack: z.coerce.number().optional().describe("Only consider exercises with sets logged in the last N days. Omit to consider all history."),
+        limit: z.coerce.number().optional(),
+        offset: z.coerce.number().optional(),
+      },
+    },
+    async ({ includeCategorized, daysBack, limit, offset }) => {
+      const p = new URLSearchParams();
+      if (includeCategorized) p.set("includeCategorized", "true");
+      if (daysBack !== undefined) p.set("daysBack", String(daysBack));
+      if (limit !== undefined) p.set("limit", String(limit));
+      if (offset !== undefined) p.set("offset", String(offset));
+      const qs = p.toString();
+      return ok(await nutritionRequest(`/strength/exercises/uncategorized${qs ? "?" + qs : ""}`));
+    }
+  );
+
+  server.registerTool(
+    "tag_exercise_muscles",
+    {
+      description: `Classify one exercise by the muscles it works, so its sets become findable via get_strength_sets(focus=...). Keyed by exercise name, and applies retroactively to every set already logged under that name.
+
+Accepted muscle terms: quads, hams (hamstrings), glutes, chest, back, shoulders, arms, core, calves - plus common synonyms (biceps, triceps, abs, lats, delts, pecs, quadriceps...). Anything unrecognized is reported back in ignoredMuscles rather than applied, so check the response.
+
+SAFE: only blank cells are ever filled. An existing classification - including one the user corrected by hand - is never overwritten, so re-tagging cannot clobber their work. If the response says nothing was written, the exercise was already classified.
+
+Use list_uncategorized_exercises to find what needs this.`,
+      inputSchema: {
+        exerciseName: z.string().describe("Exact exercise name as it appears in strength history, e.g. 'Suitcase-to-Curl (barbell)'. Get it from list_uncategorized_exercises."),
+        primaryMuscles: jsonParsed(z.array(z.string())).describe(`Muscles this exercise mainly works. The first one determines Main Focus. e.g. ["arms"] for a curl.`),
+        secondaryMuscles: jsonParsed(z.array(z.string())).optional().describe(`Muscles worked secondarily, e.g. ["core", "back"] for a suitcase carry variant. These get focus flags but do not set Main Focus.`),
+      },
+    },
+    async ({ exerciseName, primaryMuscles, secondaryMuscles }) => {
+      const body = { exerciseName, primaryMuscles };
+      if (secondaryMuscles !== undefined) body.secondaryMuscles = secondaryMuscles;
+      return ok(await nutritionRequest("/upsertExerciseMapping", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }));
+    }
+  );
+
   // -------------------------------------------------------------------------
-  // Speediance tools
+  // Speediance tools - DEPRECATED / DORMANT
   // -------------------------------------------------------------------------
+  // The vendor app broke, so the machine is not in active use. Everything here
+  // is kept wired up (and working) in case the vendor fixes it, but each tool
+  // description carries the deprecatedSpeediance() banner so agents prefer the
+  // direct strength tools. If the machine comes back into use, drop the
+  // deprecatedSpeediance() wrappers below and that preference disappears.
   // Device type note: exercise listings always use Gym Monster (deviceType=1)
   // because this user's pulley setup lets them use GM movements. All workout
   // templates and scheduling target Gym Pal (deviceType=2). This is baked into
@@ -758,7 +890,7 @@ For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done
   server.registerTool(
     "list_exercises",
     {
-      description: "List the Speediance exercise library, grouped by category and muscle group. Each exercise entry includes its name and groupId. IMPORTANT: groupId alone is not enough to build a workout — you also need an actionLibraryId, which is a separate value only available via get_exercise_detail(groupId). Alternatively, use create_speediance_workout (by name) to skip the ID lookup entirely.",
+      description: deprecatedSpeediance("List the Speediance exercise library, grouped by category and muscle group. Each exercise entry includes its name and groupId. IMPORTANT: groupId alone is not enough to build a workout — you also need an actionLibraryId, which is a separate value only available via get_exercise_detail(groupId). Alternatively, use create_speediance_workout (by name) to skip the ID lookup entirely."),
     },
     async () => ok(await spedianceRequest("/exercises"))
   );
@@ -766,7 +898,7 @@ For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done
   server.registerTool(
     "get_exercise_detail",
     {
-      description: "Get full detail for one exercise group, including the actionLibraryList — the source of valid actionLibraryId values required by save_speediance_workout. Pick the first entry where isDisplay=1, or the first entry if none are marked. The groupId parameter is the id field from list_exercises.",
+      description: deprecatedSpeediance("Get full detail for one exercise group, including the actionLibraryList — the source of valid actionLibraryId values required by save_speediance_workout. Pick the first entry where isDisplay=1, or the first entry if none are marked. The groupId parameter is the id field from list_exercises."),
       inputSchema: { groupId: z.coerce.number().describe("The exercise groupId (the 'id' field from list_exercises)") },
     },
     async ({ groupId }) => ok(await spedianceRequest(`/exercise/${groupId}`))
@@ -775,7 +907,7 @@ For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done
   server.registerTool(
     "list_speediance_workouts",
     {
-      description: "List the user's saved custom Speediance workout templates.",
+      description: deprecatedSpeediance("List the user's saved custom Speediance workout templates."),
     },
     async () => ok(await spedianceRequest("/workouts"))
   );
@@ -783,7 +915,7 @@ For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done
   server.registerTool(
     "get_speediance_workout",
     {
-      description: "Get the full detail of a saved Speediance workout template by its code.",
+      description: deprecatedSpeediance("Get the full detail of a saved Speediance workout template by its code."),
       inputSchema: { code: z.string().describe("The template code from list_speediance_workouts") },
     },
     async ({ code }) => ok(await spedianceRequest(`/workout/${code}`))
@@ -792,7 +924,7 @@ For a circuit repeated N times, multiply into sets: a circuit of 8 push-ups done
   server.registerTool(
     "save_speediance_workout",
     {
-      description: `Create a new Speediance workout template. groupId and actionLibraryId are NOT the same value and cannot be guessed or duplicated from each other. Required workflow:
+      description: deprecatedSpeediance(`Create a new Speediance workout template. groupId and actionLibraryId are NOT the same value and cannot be guessed or duplicated from each other. Required workflow:
 1. Call list_exercises → get groupId for the exercise
 2. Call get_exercise_detail(groupId) → pick an actionLibraryId from actionLibraryList (prefer isDisplay=1, or first entry). Also read isLeftRight from the detail root (1 = unilateral/single-arm, 0 = bilateral).
 Shortcut: existing templates from list_speediance_workouts contain confirmed working {groupId, actionLibraryId} pairs you can reuse.
@@ -804,7 +936,7 @@ Modes:
 - "hypertrophy": 3 sets × 12 reps @ 13RM, 60s rest (default for muscle building)
 - "strength":    5 sets × 5 reps  @ 6RM,  90s rest (default for strength)
 - "custom":      you specify sets, reps, weight (lbs), and rest
-For hypertrophy/strength you can override sets and rest; reps and RM are fixed by the mode.`,
+For hypertrophy/strength you can override sets and rest; reps and RM are fixed by the mode.`),
       inputSchema: {
         name: z.string().describe("Workout name"),
         exercises: jsonParsed(z.array(z.object({
@@ -829,7 +961,7 @@ For hypertrophy/strength you can override sets and rest; reps and RM are fixed b
   server.registerTool(
     "create_speediance_workout",
     {
-      description: `Build a Speediance workout TEMPLATE on the machine — a plan to perform later. This does NOT record a completed workout and writes nothing to nutrition or strength history. To log a session you already did, use log_manual_strength (history) and/or log_activity (calorie credit).
+      description: deprecatedSpeediance(`Build a Speediance workout TEMPLATE on the machine — a plan to perform later. This does NOT record a completed workout and writes nothing to nutrition or strength history. To log a session you already did, use log_manual_strength (history) and/or log_activity (calorie credit).
 
 Each exercise uses EITHER "name" (keyword search) OR "groupId" (direct ID) — not both.
 
@@ -850,7 +982,7 @@ USING groupId (when using "groupId"):
 Modes:
 - "hypertrophy": 3 sets × 12 reps @ 13RM, 60s rest
 - "strength":    5 sets × 5 reps  @ 6RM,  90s rest
-- "custom":      you specify sets, reps, weight (lbs), and rest`,
+- "custom":      you specify sets, reps, weight (lbs), and rest`),
       inputSchema: {
         name: z.string().describe("Workout name"),
         exercises: jsonParsed(z.array(z.object({
@@ -874,7 +1006,7 @@ Modes:
   server.registerTool(
     "delete_speediance_workout",
     {
-      description: "Delete a saved Speediance workout template by its numeric ID. Use list_speediance_workouts to find the ID first.",
+      description: deprecatedSpeediance("Delete a saved Speediance workout template by its numeric ID. Use list_speediance_workouts to find the ID first."),
       inputSchema: { id: z.coerce.number().describe("The template ID to delete") },
     },
     async ({ id }) => ok(await spedianceRequest(`/workout/${id}`, { method: "DELETE" }))
@@ -883,7 +1015,7 @@ Modes:
   server.registerTool(
     "get_speediance_calendar",
     {
-      description: "Get the Speediance training calendar for a given month, showing scheduled and completed workouts.",
+      description: deprecatedSpeediance("Get the Speediance training calendar for a given month, showing scheduled and completed workouts."),
       inputSchema: { month: z.string().describe("Month in YYYY-MM format (defaults to current month if omitted)").optional() },
     },
     async ({ month }) => ok(await spedianceRequest(month ? `/calendar?month=${month}` : "/calendar"))
@@ -892,7 +1024,7 @@ Modes:
   server.registerTool(
     "schedule_speediance_workout",
     {
-      description: "Schedule a Speediance workout template on a specific date.",
+      description: deprecatedSpeediance("Schedule a Speediance workout template on a specific date."),
       inputSchema: {
         templateCode: z.string().describe("The template code from list_speediance_workouts"),
         date:         z.string().describe("Date in YYYY-MM-DD format"),
@@ -908,7 +1040,7 @@ Modes:
   server.registerTool(
     "get_speediance_history",
     {
-      description: "Get Speediance training session records for a date range.",
+      description: deprecatedSpeediance("Get Speediance training session records for a date range."),
       inputSchema: {
         startDate: z.string().describe("Start date in YYYY-MM-DD format"),
         endDate:   z.string().describe("End date in YYYY-MM-DD format"),
@@ -926,7 +1058,7 @@ Modes:
   server.registerTool(
     "get_speediance_activity",
     {
-      description: "Get full exercise-by-exercise detail for a single Speediance training session, including sets, reps, and weight for each exercise. Use the trainingId field from get_speediance_history results.",
+      description: deprecatedSpeediance("Get full exercise-by-exercise detail for a single Speediance training session, including sets, reps, and weight for each exercise. Use the trainingId field from get_speediance_history results."),
       inputSchema: { trainingId: z.coerce.number().describe("The trainingId from a get_speediance_history result") },
     },
     async ({ trainingId }) => ok(await spedianceRequest(`/training/${trainingId}`))
