@@ -26,6 +26,43 @@ function jsonParsed(schema) {
 }
 
 // ---------------------------------------------------------------------------
+// Recipe ingredients: a flat list of strings, or groups with nested lists.
+// ---------------------------------------------------------------------------
+
+const plainIngredient = z.union([
+  z.string(),
+  z.object({ text: z.string() }).passthrough(),
+]);
+
+const ingredientEntry = z.union([
+  z.string(),
+  z
+    .object({
+      text: z.string(),
+      ingredients: z.array(plainIngredient).optional(),
+    })
+    .passthrough(),
+]);
+
+const INGREDIENTS_DESC =
+  "Ingredients. Each entry is either a plain ingredient string (e.g. '2 cups flour') " +
+  "or a group object {text: 'FOR THE DOUGH:', ingredients: ['2 cups flour', '1 tsp salt']} " +
+  "whose nested list is preserved as a real sub-list (not flattened or prefixed). " +
+  "Flat strings and groups can be mixed in the same list.";
+
+// Map input onto the Gourmet payload: strings become {text}, groups keep their
+// nested ingredients array (itself normalized the same way).
+function normalizeIngredients(list) {
+  return list.map((entry) => {
+    if (typeof entry === "string") return { text: entry };
+    if (Array.isArray(entry.ingredients)) {
+      return { ...entry, ingredients: normalizeIngredients(entry.ingredients) };
+    }
+    return entry;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Build and connect a fresh McpServer for each request (stateless mode).
 // ---------------------------------------------------------------------------
 
@@ -1369,10 +1406,10 @@ Modes:
   server.registerTool(
     "create_recipe",
     {
-      description: "Save a new recipe. Ingredients and categories can be simple string arrays; the API normalizes them.",
+      description: "Save a new recipe. Categories can be a simple string array. Ingredients can be plain strings, or group objects with nested ingredient lists (see the ingredients field).",
       inputSchema: {
         title: z.string().describe("Recipe title"),
-        ingredients: jsonParsed(z.array(z.string())).optional().describe("List of ingredient strings, e.g. '2 cups flour'"),
+        ingredients: jsonParsed(z.array(ingredientEntry)).optional().describe(INGREDIENTS_DESC),
         instructions: z.string().optional().describe("Cooking instructions (plain text or HTML)"),
         categories: jsonParsed(z.array(z.string())).optional().describe("Category names, e.g. ['Dinner', 'Italian']"),
         sources: jsonParsed(z.array(z.string())).optional().describe("Source URLs or names"),
@@ -1390,7 +1427,7 @@ Modes:
     },
     async ({ title, ingredients, instructions, categories, sources, rating, yields, times }) => {
       const body = { title };
-      if (ingredients) body.ingredients = ingredients;
+      if (ingredients) body.ingredients = normalizeIngredients(ingredients);
       if (instructions) body.instructions = instructions;
       if (categories) body.categories = categories;
       if (sources) body.sources = sources;
@@ -1408,7 +1445,7 @@ Modes:
       inputSchema: {
         id: z.string().describe("The recipe _id to update"),
         title: z.string().optional(),
-        ingredients: jsonParsed(z.array(z.string())).optional().describe("Replaces the ingredient list"),
+        ingredients: jsonParsed(z.array(ingredientEntry)).optional().describe("Replaces the ingredient list. " + INGREDIENTS_DESC),
         instructions: z.string().optional().describe("Replaces the instructions"),
         categories: jsonParsed(z.array(z.string())).optional().describe("Replaces the category list"),
         sources: jsonParsed(z.array(z.string())).optional(),
@@ -1424,7 +1461,8 @@ Modes:
     async ({ id, ...fields }) => {
       const recipe = {};
       for (const [k, v] of Object.entries(fields)) {
-        if (v !== undefined) recipe[k] = v;
+        if (v === undefined) continue;
+        recipe[k] = k === "ingredients" ? normalizeIngredients(v) : v;
       }
       return ok(await recipeRequest("/recipes/update", { id, recipe }));
     }
