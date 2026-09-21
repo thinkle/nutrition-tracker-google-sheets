@@ -29,38 +29,47 @@ function jsonParsed(schema) {
 // Recipe ingredients: a flat list of strings, or groups with nested lists.
 // ---------------------------------------------------------------------------
 
+// One ingredient: either the structured shape (preferred) or a plain line of
+// text. Gourmet parses the text server-side, so a string is always safe --
+// but send the parts when you know them and nothing has to be guessed.
 const plainIngredient = z.union([
-  z.string(),
-  z.object({ text: z.string() }).passthrough(),
-]);
-
-const ingredientEntry = z.union([
   z.string(),
   z
     .object({
-      text: z.string(),
-      ingredients: z.array(plainIngredient).optional(),
+      ingredient: z.string().optional().describe("Ingredient name and prep, e.g. 'flour, sifted'"),
+      text: z.string().optional().describe("Same as `ingredient`; either key works"),
+      amount: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("Number, or a parseable string like '1 1/2', '2-3' or 'two'"),
+      unit: z.string().optional().describe("e.g. 'cups', 'tbsp', 'cloves'"),
+      rangeAmount: z.number().optional().describe("Other end of a range, if not written into `amount`"),
     })
     .passthrough(),
 ]);
 
-const INGREDIENTS_DESC =
-  "Ingredients. Each entry is either a plain ingredient string (e.g. '2 cups flour') " +
-  "or a group object {text: 'FOR THE DOUGH:', ingredients: ['2 cups flour', '1 tsp salt']} " +
-  "whose nested list is preserved as a real sub-list (not flattened or prefixed). " +
-  "Flat strings and groups can be mixed in the same list.";
+// A top-level entry may additionally be a group heading with its own sub-list.
+const ingredientEntry = z.union([
+  z
+    .object({
+      text: z.string().describe("Group heading, e.g. 'FOR THE DOUGH:'"),
+      ingredients: z.array(plainIngredient),
+    })
+    .passthrough(),
+  plainIngredient,
+]);
 
-// Map input onto the Gourmet payload: strings become {text}, groups keep their
-// nested ingredients array (itself normalized the same way).
-function normalizeIngredients(list) {
-  return list.map((entry) => {
-    if (typeof entry === "string") return { text: entry };
-    if (Array.isArray(entry.ingredients)) {
-      return { ...entry, ingredients: normalizeIngredients(entry.ingredients) };
-    }
-    return entry;
-  });
-}
+const INGREDIENTS_DESC =
+  "Ingredients. Preferred shape per entry: {amount, unit, ingredient} with the " +
+  "parts separated, e.g. {amount: 1.5, unit: 'cups', ingredient: 'flour, sifted'}. " +
+  "`amount` may be a number or a parseable string ('1 1/2', '2-3'); omit amount " +
+  "and unit for things like 'salt to taste'. Keep the amount and unit OUT of " +
+  "`ingredient` -- it is the name and prep only. " +
+  "If you only have a line of text, send the plain string ('1 1/2 cups flour, " +
+  "sifted') and the server parses the amount and unit out of it. " +
+  "A group is {text: 'FOR THE DOUGH:', ingredients: [...]}; its nested list is " +
+  "preserved as a real sub-list (not flattened or prefixed). Strings, structured " +
+  "entries and groups can be mixed in the same list.";
 
 // ---------------------------------------------------------------------------
 // Build and connect a fresh McpServer for each request (stateless mode).
@@ -1406,7 +1415,7 @@ Modes:
   server.registerTool(
     "create_recipe",
     {
-      description: "Save a new recipe. Categories can be a simple string array. Ingredients can be plain strings, or group objects with nested ingredient lists (see the ingredients field).",
+      description: "Save a new recipe. Categories can be a simple string array. Ingredients are best sent as {amount, unit, ingredient} objects; plain strings work too and are parsed server-side (see the ingredients field).",
       inputSchema: {
         title: z.string().describe("Recipe title"),
         ingredients: jsonParsed(z.array(ingredientEntry)).optional().describe(INGREDIENTS_DESC),
@@ -1427,7 +1436,7 @@ Modes:
     },
     async ({ title, ingredients, instructions, categories, sources, rating, yields, times }) => {
       const body = { title };
-      if (ingredients) body.ingredients = normalizeIngredients(ingredients);
+      if (ingredients) body.ingredients = ingredients;
       if (instructions) body.instructions = instructions;
       if (categories) body.categories = categories;
       if (sources) body.sources = sources;
@@ -1441,13 +1450,13 @@ Modes:
   server.registerTool(
     "update_recipe",
     {
-      description: "Update an existing recipe by ID. Only the fields you provide are changed (partial update).",
+      description: "Update an existing recipe by ID. Partial at the FIELD level: fields you omit keep their stored value, and fields you send REPLACE the stored value. Arrays are replaced wholesale, not merged -- sending `ingredients` throws away the old ingredient list, so to add or change one item, call get_recipe first and send back the full new list.",
       inputSchema: {
         id: z.string().describe("The recipe _id to update"),
         title: z.string().optional(),
-        ingredients: jsonParsed(z.array(ingredientEntry)).optional().describe("Replaces the ingredient list. " + INGREDIENTS_DESC),
+        ingredients: jsonParsed(z.array(ingredientEntry)).optional().describe("Replaces the ENTIRE ingredient list (not merged). " + INGREDIENTS_DESC),
         instructions: z.string().optional().describe("Replaces the instructions"),
-        categories: jsonParsed(z.array(z.string())).optional().describe("Replaces the category list"),
+        categories: jsonParsed(z.array(z.string())).optional().describe("Replaces the ENTIRE category list (not merged)"),
         sources: jsonParsed(z.array(z.string())).optional(),
         rating: z.coerce.number().min(0).max(5).optional(),
         yields: jsonParsed(z.array(z.object({ amount: z.coerce.number(), unit: z.string() }))).optional(),
@@ -1462,7 +1471,7 @@ Modes:
       const recipe = {};
       for (const [k, v] of Object.entries(fields)) {
         if (v === undefined) continue;
-        recipe[k] = k === "ingredients" ? normalizeIngredients(v) : v;
+        recipe[k] = v;
       }
       return ok(await recipeRequest("/recipes/update", { id, recipe }));
     }
