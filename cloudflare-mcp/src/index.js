@@ -1477,6 +1477,82 @@ Modes:
     }
   );
 
+  // TEMPORARY (2026-09-21): one-off backfill for recipes written before the
+  // Gourmet API parsed ingredients server-side. Remove once it has been run.
+  server.registerTool(
+    "repair_recipe_ingredients",
+    {
+      description:
+        "MAINTENANCE, one-off. Recipes saved before the API parsed ingredients stored whole lines " +
+        "in the name field ({text: '250g all-purpose flour'}) with no amount, so nothing that reads " +
+        "amounts works on them. This re-parses those ingredients in place. It skips anything " +
+        "ambiguous ('2% milk', '7-Up') and anything that already has an amount, and it does NOT " +
+        "touch last_modified, so sort-by-recently-modified is preserved.\n\n" +
+        "Defaults to a dry run that reports what it WOULD change. Pass dryRun: false to write.",
+      inputSchema: {
+        dryRun: jsonParsed(z.boolean())
+          .optional()
+          .describe("Report without writing. Defaults to true -- pass false to actually apply."),
+        maxBatches: z.coerce
+          .number()
+          .optional()
+          .describe("Safety stop on the paging loop (default 40 batches of 25 recipes)."),
+      },
+    },
+    async ({ dryRun, maxBatches }) => {
+      const write = dryRun === false;
+      const batchCap = maxBatches ?? 40;
+      let offset = 0;
+      let batches = 0;
+      let total = 0;
+      let scanned = 0;
+      let recipesChanged = 0;
+      let ingredientsChanged = 0;
+      let stillUnparsedCount = 0;
+      const sampleChanges = [];
+      const sampleUnparsed = [];
+      while (batches < batchCap) {
+        const batch = await recipeRequest("/recipes/reparse-ingredients", {
+          dryRun: !write,
+          limit: 25,
+          offset,
+        });
+        total = batch.total;
+        scanned += batch.scanned;
+        recipesChanged += batch.recipesChanged;
+        ingredientsChanged += batch.ingredientsChanged;
+        stillUnparsedCount += batch.stillUnparsedCount;
+        // Keep a readable sample rather than every change -- a full listing of
+        // several thousand edits is no more useful than a few dozen.
+        for (const recipe of batch.recipes) {
+          for (const change of recipe.changes) {
+            if (sampleChanges.length < 30) {
+              sampleChanges.push({ recipe: recipe.title, from: change.from, to: change.to });
+            }
+          }
+        }
+        for (const text of batch.stillUnparsedSample) {
+          if (sampleUnparsed.length < 20) sampleUnparsed.push(text);
+        }
+        batches += 1;
+        offset = batch.nextOffset;
+        if (batch.done) break;
+      }
+      return ok({
+        applied: write,
+        dryRun: !write,
+        totalRecipes: total,
+        scanned,
+        complete: scanned >= total,
+        recipesChanged,
+        ingredientsChanged,
+        stillUnparsedCount,
+        sampleChanges,
+        sampleUnparsed,
+      });
+    }
+  );
+
   server.registerTool(
     "delete_recipe",
     {
