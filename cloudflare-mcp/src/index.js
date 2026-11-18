@@ -32,6 +32,17 @@ function jsonParsed(schema) {
 // One ingredient: either the structured shape (preferred) or a plain line of
 // text. Gourmet parses the text server-side, so a string is always safe --
 // but send the parts when you know them and nothing has to be guessed.
+// One measure as Gourmet stores it ({amount, rangeAmount, unit, standardUnit}),
+// so an ingredient read with get_recipe can be sent back as it came.
+const storedAmount = z
+  .object({
+    amount: z.number().optional(),
+    rangeAmount: z.number().optional(),
+    unit: z.string().optional(),
+    standardUnit: z.string().optional(),
+  })
+  .passthrough();
+
 const plainIngredient = z.union([
   z.string(),
   z
@@ -39,11 +50,28 @@ const plainIngredient = z.union([
       ingredient: z.string().optional().describe("Ingredient name and prep, e.g. 'flour, sifted'"),
       text: z.string().optional().describe("Same as `ingredient`; either key works"),
       amount: z
-        .union([z.number(), z.string()])
+        .union([z.number(), z.string(), storedAmount])
         .optional()
-        .describe("Number, or a parseable string like '1 1/2', '2-3' or 'two'"),
+        .describe("Number, or a parseable string like '1 1/2', '2-3' or 'two'; or the stored {amount, unit, ...} object exactly as get_recipe returned it"),
       unit: z.string().optional().describe("e.g. 'cups', 'tbsp', 'cloves'"),
       rangeAmount: z.number().optional().describe("Other end of a range, if not written into `amount`"),
+      altAmounts: z
+        .array(z.union([z.string(), storedAmount]))
+        .optional()
+        .describe(
+          "Further measures of the same quantity, e.g. [{amount: 225, unit: 'g'}] next to " +
+          "{amount: 2, unit: 'sticks'} (shown as '2 sticks (225 g)'); each may also be a " +
+          "string like '225 g'. [] means 'none, do not look in the text'. When resending an " +
+          "ingredient from get_recipe, send its altAmounts back or they are lost."
+        ),
+      shopItem: z
+        .string()
+        .optional()
+        .describe(
+          "The bare item for a shopping list ('eggs' for 'large eggs, beaten'). Optional: " +
+          "the server fills it from the text when omitted. If you change an ingredient's " +
+          "text, drop its old shopItem (a shopItem you send is kept as is)."
+        ),
     })
     .passthrough(),
 ]);
@@ -69,7 +97,44 @@ const INGREDIENTS_DESC =
   "sifted') and the server parses the amount and unit out of it. " +
   "A group is {text: 'FOR THE DOUGH:', ingredients: [...]}; its nested list is " +
   "preserved as a real sub-list (not flattened or prefixed). Strings, structured " +
-  "entries and groups can be mixed in the same list.";
+  "entries and groups can be mixed in the same list. " +
+  "The list is replaced wholesale, so when you send it on an update: send every " +
+  "ingredient you did not change back exactly as get_recipe returned it (keep its " +
+  "`altAmounts`, `shopItem`, `originalText`), and send a changed line either as a " +
+  "plain string like 'butter (2 sticks)' for the server to parse, or as an object " +
+  "with its altAmounts. An object sent without its altAmounts loses them.";
+
+// Recipe text: blocks of {header, body}, as get_recipe returns them.
+const textBlocks = z.array(
+  z
+    .object({
+      header: z.string().optional().describe("Block heading, e.g. 'Dough', 'Filling', 'Instructions'"),
+      body: z.string().describe("Plain text or HTML; see the `text` field description"),
+    })
+    .passthrough()
+);
+
+const BODY_FORMAT_DESC =
+  "BODY FORMAT: plain text or HTML, stored exactly as sent. Plain text: a blank line " +
+  "starts a new paragraph; lines starting '1.' or '-' become lists. HTML: only these " +
+  "tags are shown (others are removed, their text kept): p br h2 h3 h4 h5 h6 ol ul li " +
+  "b strong i em u a blockquote hr sub sup small span div table thead tbody tr th td " +
+  "img amount; attributes kept: href title src alt colspan rowspan (no class, style or " +
+  "data-*). SCALABLE AMOUNTS: wrap an ingredient quantity in the text in " +
+  "<amount>...</amount> and it scales when the reader multiplies the recipe: " +
+  "'Beat in <amount>2</amount> eggs, then <amount>1 1/2 cups</amount> milk. Bake for " +
+  "20 minutes.' reads 'Beat in 4 eggs, then 3 cups milk. Bake for 20 minutes.' at x2. " +
+  "Inside the tag: a number, fraction, mixed number or range ('2', '1/2', '1 1/2', " +
+  "'2-3'), optionally with its unit ('200 g', '1 cup'); no attributes. Wrap only " +
+  "ingredient quantities -- never times, temperatures, pan sizes or step numbers.";
+
+const TEXT_DESC =
+  "Recipe text as blocks: [{header, body}, ...], e.g. [{header: 'Dough', body: '...'}, " +
+  "{header: 'Filling', body: '...'}]. This is the shape get_recipe returns in `text`. " +
+  "Prefer this over `instructions` for anything with more than one section. On " +
+  "update_recipe it replaces ALL blocks: to change one block, get_recipe, edit its " +
+  "`text` array and send the whole array back. If both `text` and `instructions` are " +
+  "sent, `text` wins. " + BODY_FORMAT_DESC;
 
 // ---------------------------------------------------------------------------
 // Build and connect a fresh McpServer for each request (stateless mode).
@@ -1404,7 +1469,7 @@ Modes:
   server.registerTool(
     "get_recipe",
     {
-      description: "Get full details of a recipe by its ID, including ingredients, instructions, and notes.",
+      description: "Get full details of a recipe by its ID: the stored recipe as JSON. `ingredients` entries are {text, amount: {amount, rangeAmount, unit, standardUnit}, altAmounts?, shopItem?, ingkey?, originalText?} (groups are {text, ingredients: [...]}); `altAmounts` are further measures of the same quantity and `shopItem` (or older `ingkey`) is the bare item for a shopping list. `text` is the recipe text as blocks [{header, body}], bodies plain text or HTML, possibly with <amount>...</amount> marking quantities that scale. To edit, send these back to update_recipe as they are.",
       inputSchema: {
         id: z.string().describe("The recipe _id from search_recipes results"),
       },
@@ -1415,11 +1480,12 @@ Modes:
   server.registerTool(
     "create_recipe",
     {
-      description: "Save a new recipe. Categories can be a simple string array. Ingredients are best sent as {amount, unit, ingredient} objects; plain strings work too and are parsed server-side (see the ingredients field).",
+      description: "Save a new recipe. Categories can be a simple string array. Ingredients are best sent as {amount, unit, ingredient} objects; plain strings work too and are parsed server-side (see the ingredients field). Text: send `text` blocks [{header, body}] (or a single `instructions` string); bodies may be plain text or a small HTML subset, and quantities in the text can be wrapped in <amount>...</amount> so they scale with the recipe, e.g. 'Beat in <amount>2</amount> eggs' (see the `text` field).",
       inputSchema: {
         title: z.string().describe("Recipe title"),
         ingredients: jsonParsed(z.array(ingredientEntry)).optional().describe(INGREDIENTS_DESC),
-        instructions: z.string().optional().describe("Cooking instructions (plain text or HTML)"),
+        instructions: z.string().optional().describe("Cooking instructions as ONE block headed 'Instructions'. Use `text` instead for several sections. " + BODY_FORMAT_DESC),
+        text: jsonParsed(textBlocks).optional().describe(TEXT_DESC),
         categories: jsonParsed(z.array(z.string())).optional().describe("Category names, e.g. ['Dinner', 'Italian']"),
         sources: jsonParsed(z.array(z.string())).optional().describe("Source URLs or names"),
         rating: z.coerce.number().min(0).max(5).optional().describe("Rating 0–5"),
@@ -1434,10 +1500,11 @@ Modes:
         }))).optional().describe("Time info"),
       },
     },
-    async ({ title, ingredients, instructions, categories, sources, rating, yields, times }) => {
+    async ({ title, ingredients, instructions, text, categories, sources, rating, yields, times }) => {
       const body = { title };
       if (ingredients) body.ingredients = ingredients;
       if (instructions) body.instructions = instructions;
+      if (text) body.text = text;
       if (categories) body.categories = categories;
       if (sources) body.sources = sources;
       if (rating !== undefined) body.rating = rating;
@@ -1450,12 +1517,13 @@ Modes:
   server.registerTool(
     "update_recipe",
     {
-      description: "Update an existing recipe by ID. Partial at the FIELD level: fields you omit keep their stored value, and fields you send REPLACE the stored value. Arrays are replaced wholesale, not merged -- sending `ingredients` throws away the old ingredient list, so to add or change one item, call get_recipe first and send back the full new list.",
+      description: "Update an existing recipe by ID. Partial at the FIELD level: fields you omit keep their stored value, and fields you send REPLACE the stored value. Arrays are replaced wholesale, not merged -- sending `ingredients` throws away the old ingredient list, so to add or change one item, call get_recipe first and send back the full new list, with each untouched ingredient exactly as returned (keep its altAmounts and shopItem). The same trap applies to text: `instructions` REPLACES ALL text blocks with one; to keep several sections send `text: [{header, body}, ...]` (get_recipe, edit the `text` array, send it all back). Quantities in text bodies can be wrapped in <amount>...</amount> to scale with the recipe (see the `text` field).",
       inputSchema: {
         id: z.string().describe("The recipe _id to update"),
         title: z.string().optional(),
         ingredients: jsonParsed(z.array(ingredientEntry)).optional().describe("Replaces the ENTIRE ingredient list (not merged). " + INGREDIENTS_DESC),
-        instructions: z.string().optional().describe("Replaces the instructions"),
+        instructions: z.string().optional().describe("Replaces ALL text blocks with ONE block headed 'Instructions'. To keep several sections, send `text` instead. " + BODY_FORMAT_DESC),
+        text: jsonParsed(textBlocks).optional().describe(TEXT_DESC),
         categories: jsonParsed(z.array(z.string())).optional().describe("Replaces the ENTIRE category list (not merged)"),
         sources: jsonParsed(z.array(z.string())).optional(),
         rating: z.coerce.number().min(0).max(5).optional(),
